@@ -1,6 +1,6 @@
 using Serialization, LinearAlgebra, Statistics, Random, Distributions, StaticArrays, Printf, NPZ
 
-include(joinpath(@__DIR__, "..", "src", "pure_packet_engine.jl"))
+using PurePacketPPSeq
 
 println("=================================================================")
 println("Level m=0..5 Pure Packet Engine: FULL SESSION (13,833s / 3.84 hrs)")

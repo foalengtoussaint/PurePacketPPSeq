@@ -6,7 +6,8 @@ using Random, Printf, NPZ, Serialization, Statistics, LinearAlgebra
 
 # Load legacy struct definitions for initial seed dictionary checkpoint
 include("/home/foaleng/Downloads/mop_awake_ppseq/custom_sampler/regime_triad_sampler/run_regime_sampler.jl")
-include(joinpath(@__DIR__, "..", "src", "pure_packet_engine.jl"))
+using PurePacketPPSeq
+const sample_occurrence_coordinate! = PurePacketPPSeq.sample_occurrence_coordinate!
 
 const BASE_CK_PATH = "/home/foaleng/Downloads/mop_awake_ppseq/custom_sampler/results/top4_task_20261008/mh_screening_experiment/regime_triad_reproduction_100s/checkpoint.jls"
 ck = open(deserialize, BASE_CK_PATH)

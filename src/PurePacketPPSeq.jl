@@ -65,6 +65,8 @@ export
     SpikeAssignment,
     ContinuousOUContext,
     ARDManifoldState,
+    TaskRegime,
+    Level5Hyperstate,
     AuditPacketInstance,
 
     # Mechanism m=2: Dynamic Bounding & Indexing

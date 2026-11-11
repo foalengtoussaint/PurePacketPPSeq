@@ -2,7 +2,7 @@
 
 julia_version = "1.13.0"
 manifest_format = "2.1"
-project_hash = "c7090f221527e9ba272afe585c8c4e2e34402c56"
+project_hash = "e6711b494b1199f06e4cf16fadc187b68a034ec7"
 
 [[deps.AliasTables]]
 deps = ["PtrArrays", "Random"]
@@ -333,7 +333,7 @@ weakdeps = ["StatsBase"]
     StatsBaseExt = "StatsBase"
 
 [[deps.PPSeq]]
-deps = ["ArgParse", "Distributions", "JSON", "LinearAlgebra", "NPZ", "PyPlot", "Random", "SpecialFunctions", "StaticArrays", "Statistics", "StatsBase", "StatsFuns", "YAML"]
+deps = ["ArgParse", "Distributions", "JSON", "LinearAlgebra", "NPZ", "Printf", "PyPlot", "Random", "Serialization", "SpecialFunctions", "StaticArrays", "Statistics", "StatsBase", "StatsFuns", "YAML"]
 path = "."
 uuid = "bde08ef1-7bcc-48ee-8e40-33ae55139814"
 version = "0.4.1"

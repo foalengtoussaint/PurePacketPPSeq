@@ -1,6 +1,5 @@
 using Test, Random, Statistics, LinearAlgebra, StaticArrays, Distributions, SpecialFunctions, Serialization, Printf
-
-include(joinpath(@__DIR__, "..", "src", "pure_packet_engine.jl"))
+using PurePacketPPSeq
 
 function check_coord_alloc(u_out, m, active_mask, res, prec, prior_p, rng)
     sample_occurrence_coordinate!(u_out, m, active_mask, res, prec; prior_precisions=prior_p, rng=rng)
