@@ -11,7 +11,7 @@ data = load_awake_spikes()
 motifs = load_seed_motifs()
 
 # 2. Initialize cold-scratch model with memoryless ISI tail baseline (0 active occurrences)
-model = initialize_scratch_model(data, motifs; R_max=4)
+model = initialize_scratch_model(data, motifs; R_init=1)
 
 # 3. Fit MCMC with automated diagnostics, KS monitoring & checkpoints
 N_sweeps = length(ARGS) >= 1 ? parse(Int, ARGS[1]) : 50

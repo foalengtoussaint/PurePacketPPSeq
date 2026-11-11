@@ -159,19 +159,6 @@ function resample_occurrence_onset!(
     P = length(m.packets)
     P == 0 && return
 
-    k1 = 0; k2 = 0; k3 = 0; k4 = 0
-    K = 0
-    for r in 1:length(active_mask)
-        if active_mask[r]
-            K += 1
-            if K == 1; k1 = r
-            elseif K == 2; k2 = r
-            elseif K == 3; k3 = r
-            elseif K == 4; k4 = r
-            end
-        end
-    end
-
     potential = 0.0
     tot_prec = 0.0
     u = occ.u
@@ -183,10 +170,10 @@ function resample_occurrence_onset!(
         sig2 = pkt.var
         v_inv = c / sig2
         pred_s = 0.0
-        if K == 1; pred_s = m.W[k1, p] * u[k1]
-        elseif K == 2; pred_s = m.W[k1, p] * u[k1] + m.W[k2, p] * u[k2]
-        elseif K == 3; pred_s = m.W[k1, p] * u[k1] + m.W[k2, p] * u[k2] + m.W[k3, p] * u[k3]
-        elseif K == 4; pred_s = m.W[k1, p] * u[k1] + m.W[k2, p] * u[k2] + m.W[k3, p] * u[k3] + m.W[k4, p] * u[k4]
+        @simd for r in 1:min(size(m.W, 1), length(u), length(active_mask))
+            if active_mask[r]
+                @inbounds pred_s += m.W[r, p] * u[r]
+            end
         end
         tot_prec += v_inv
         potential += (v_inv / c) * (occ.sum_t[p] - c * (pkt.mu + pred_s))
@@ -226,19 +213,6 @@ function calc_marginal_log_evidence(
     prior_deficit = alpha_c * log(beta_c / (beta_c + A_m))
     N_e == 0 && return prior_deficit
 
-    k1 = 0; k2 = 0; k3 = 0; k4 = 0
-    K = 0
-    for r in 1:length(active_mask)
-        if active_mask[r]
-            K += 1
-            if K == 1; k1 = r
-            elseif K == 2; k2 = r
-            elseif K == 3; k3 = r
-            elseif K == 4; k4 = r
-            end
-        end
-    end
-
     kernel_sum = 0.0
     for spk_idx in members
         p = assign[spk_idx].packet_idx
@@ -249,10 +223,10 @@ function calc_marginal_log_evidence(
         lam0 = max(bg_rates[pkt.channel], 1e-12)
 
         pred_s = 0.0
-        if K == 1; pred_s = m.W[k1, p] * u[k1]
-        elseif K == 2; pred_s = m.W[k1, p] * u[k1] + m.W[k2, p] * u[k2]
-        elseif K == 3; pred_s = m.W[k1, p] * u[k1] + m.W[k2, p] * u[k2] + m.W[k3, p] * u[k3]
-        elseif K == 4; pred_s = m.W[k1, p] * u[k1] + m.W[k2, p] * u[k2] + m.W[k3, p] * u[k3] + m.W[k4, p] * u[k4]
+        @simd for r in 1:min(size(m.W, 1), length(u), length(active_mask))
+            if active_mask[r]
+                @inbounds pred_s += m.W[r, p] * u[r]
+            end
         end
 
         dt = spike_t[spk_idx] - (tau + pkt.mu + pred_s)
@@ -578,24 +552,25 @@ function detect_and_birth_occurrences!(
                 continue
             end
 
-            u_star_vec = zeros(Float64, R_max)
-            k1 = 0; k2 = 0; k3 = 0; k4 = 0
+            ws = get_kinematic_workspace()
             K = 0
-            for r in 1:min(R_max, length(act_mask))
+            for r in 1:length(act_mask)
                 if act_mask[r]
                     K += 1
-                    if K == 1; k1 = r
-                    elseif K == 2; k2 = r
-                    elseif K == 3; k3 = r
-                    elseif K == 4; k4 = r
-                    end
+                    ws.act[K] = r
                 end
             end
+            curr_R = length(act_mask)
+            u_star_vec = view(ws.u, 1:curr_R)
+            fill!(u_star_vec, 0.0)
 
             kernel_sum = sum(cand_lr)
             if K > 0 && N_cand >= 2
-                A_mat = zeros(MMatrix{4, 4, Float64})
-                b_vec = zeros(MVector{4, Float64})
+                A_mat = view(ws.A, 1:K, 1:K)
+                b_vec = view(ws.b, 1:K)
+                u_sub = view(ws.z, 1:K)
+                fill!(A_mat, 0.0)
+                fill!(b_vec, 0.0)
                 for r in 1:K
                     A_mat[r, r] = 1.0
                 end
@@ -606,18 +581,15 @@ function detect_and_birth_occurrences!(
                     kap = 1.0 / pkt.var
                     y = spike_t[s] - (tau_star + pkt.mu)
                     for r1 in 1:K
-                        r1_idx = (r1 == 1) ? k1 : ((r1 == 2) ? k2 : ((r1 == 3) ? k3 : k4))
-                        wr1 = m.W[r1_idx, p]
+                        wr1 = m.W[ws.act[r1], p]
                         b_vec[r1] += kap * wr1 * y
                         for r2 in 1:K
-                            r2_idx = (r2 == 1) ? k1 : ((r2 == 2) ? k2 : ((r2 == 3) ? k3 : k4))
-                            A_mat[r1, r2] += kap * wr1 * m.W[r2_idx, p]
+                            A_mat[r1, r2] += kap * wr1 * m.W[ws.act[r2], p]
                         end
                     end
                 end
-                A_sub = SMatrix{K, K, Float64}(view(A_mat, 1:K, 1:K))
-                b_sub = SVector{K, Float64}(view(b_vec, 1:K))
-                u_sub = inv(A_sub) * b_sub
+                C = cholesky!(Hermitian(A_mat))
+                ldiv!(u_sub, C, b_vec)
 
                 kernel_sum_warped = 0.0
                 for k_idx in 1:N_cand
@@ -630,8 +602,7 @@ function detect_and_birth_occurrences!(
                     lam0 = max(bg_rates[c], 1e-12)
                     pred_s = 0.0
                     for r in 1:K
-                        r_idx = (r == 1) ? k1 : ((r == 2) ? k2 : ((r == 3) ? k3 : k4))
-                        pred_s += m.W[r_idx, p] * u_sub[r]
+                        pred_s += m.W[ws.act[r], p] * u_sub[r]
                     end
                     dt_warp = spike_t[s] - (tau_star + pkt.mu + pred_s)
                     N_j = exp(-0.5 * (dt_warp * dt_warp) / sig2) / (sqrt(2pi) * sig)
@@ -641,8 +612,7 @@ function detect_and_birth_occurrences!(
                 if kernel_sum_warped > kernel_sum
                     kernel_sum = kernel_sum_warped
                     for r in 1:K
-                        r_idx = (r == 1) ? k1 : ((r == 2) ? k2 : ((r == 3) ? k3 : k4))
-                        u_star_vec[r_idx] = u_sub[r]
+                        u_star_vec[ws.act[r]] = u_sub[r]
                     end
                 end
             end
@@ -668,9 +638,9 @@ function detect_and_birth_occurrences!(
 
             if incumbent_eid == 0
                 if log(rand(rng)) < min(0.0, ln_R)
-                    new_occ = PureOccurrence(next_eid, mid, tau_star, R_max, P; amplitude=1.0)
+                    new_occ = PureOccurrence(next_eid, mid, tau_star, curr_R, P; amplitude=1.0)
                     next_eid += 1
-                    for r in 1:R_max
+                    for r in 1:curr_R
                         new_occ.u[r] = u_star_vec[r]
                     end
                     for k_idx in 1:N_cand

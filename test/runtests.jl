@@ -640,14 +640,24 @@ end
         @test allocs == 0
         println("Zero-allocation solve with continuous precision prior: ", allocs, " bytes")
 
-        # 4. Test Dynamic Dimensional Growth R -> R+1
-        m1.W = vcat(m1.W, [0.015 -0.015]) # New dimension 3 has active loadings
-        @test size(m1.W, 1) == 3
+        # 4. Test Dynamic Dimensional Growth R -> R+1 beyond static limits (e.g. R -> 6)
+        m1.W = vcat(m1.W, [0.015 -0.015]) # New dimension 3
+        m1.W = vcat(m1.W, [0.010 -0.010]) # New dimension 4
+        m1.W = vcat(m1.W, [0.005 -0.005]) # New dimension 5
+        m1.W = vcat(m1.W, [0.002 -0.002]) # New dimension 6
+        @test size(m1.W, 1) == 6
         # Invalidate and update bounds
         update_motif_bounds!(m1)
         @test m1.delta_left < -0.040
         @test m1.delta_right > 0.140
-        println("Dynamic growth R -> 3 successful; W size: ", size(m1.W))
+
+        # Verify zero heap allocations on high dimension R = 6
+        u_out6 = zeros(Float64, 6)
+        active_mask6 = trues(6)
+        prior_p6 = fill(1.0, 6)
+        allocs6 = check_coord_alloc(u_out6, m1, active_mask6, res, prec, prior_p6, rng)
+        @test allocs6 == 0
+        println("Dynamic growth R -> 6 successful (0 allocations in R=6 solve); W size: ", size(m1.W))
     end
 
 

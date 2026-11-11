@@ -3,15 +3,51 @@
 # Generative Role:
 # - Continuous low-dimensional temporal warping:
 #     mu_{e,p} = tau_e + mu_p + sum_r W_{r,p} u_{e,r}
-# - Zero-allocation analytical solve for occurrence coordinate u_e in R^R.
+# - Zero-allocation analytical and in-place Cholesky solves for occurrence coordinate u_e in R^R.
 # - Conjugate Gaussian draws for carrier loadings W_{r,p}.
 # - Automatic Relevance Determination (ARD) manifold precisions alpha_r.
-# - Cramér-Rao manifold pruning: deactivates axes exceeding alpha_prune = 6500 s^-2.
+# - Dynamic data-driven dimensional growth R -> R+1 and Cramér-Rao pruning (alpha_prune = 6500 s^-2).
+
+"""
+    KinematicWorkspace
+
+Pre-allocated reusable scratchpad buffers ensuring exact 0-allocation linear solves
+for arbitrary kinematic dimensions R.
+"""
+mutable struct KinematicWorkspace
+    A::Matrix{Float64}
+    b::Vector{Float64}
+    u::Vector{Float64}
+    z::Vector{Float64}
+    act::Vector{Int}
+end
+
+function KinematicWorkspace(max_dim::Int=64)
+    return KinematicWorkspace(
+        zeros(Float64, max_dim, max_dim),
+        zeros(Float64, max_dim),
+        zeros(Float64, max_dim),
+        zeros(Float64, max_dim),
+        zeros(Int, max_dim)
+    )
+end
+
+const GLOBAL_KINEMATIC_WS = [KinematicWorkspace(64) for _ in 1:max(Threads.maxthreadid(), 16)]
+
+@inline function get_kinematic_workspace()
+    tid = Threads.threadid()
+    if tid <= length(GLOBAL_KINEMATIC_WS)
+        return GLOBAL_KINEMATIC_WS[tid]
+    else
+        return GLOBAL_KINEMATIC_WS[1]
+    end
+end
 
 """
     sample_packet_loadings!(m::PurePacketMotif, state_alpha, active_mask, occ_u, residuals, precisions; rng=default_rng())
 
 Conjugate Gaussian draw for manifold loadings W_{r,p} followed by exact translational gauge projection.
+Operates dynamically for any dimension R with 0 heap allocations.
 """
 function sample_packet_loadings!(
     m::PurePacketMotif,
@@ -25,18 +61,13 @@ function sample_packet_loadings!(
     P = length(m.packets)
     P == 0 && return
     E = length(occ_u)
-    R_max = length(active_mask)
+    ws = get_kinematic_workspace()
 
-    k1 = 0; k2 = 0; k3 = 0; k4 = 0
     K = 0
-    @inbounds for r in 1:R_max
+    @inbounds for r in 1:length(active_mask)
         if active_mask[r]
             K += 1
-            if K == 1; k1 = r
-            elseif K == 2; k2 = r
-            elseif K == 3; k3 = r
-            elseif K == 4; k4 = r
-            end
+            ws.act[K] = r
         end
     end
 
@@ -44,6 +75,7 @@ function sample_packet_loadings!(
 
     @inbounds for p in 1:P
         if K == 1
+            k1 = ws.act[1]
             a11 = state_alpha[k1]
             b1 = 0.0
             for e in 1:E
@@ -56,6 +88,7 @@ function sample_packet_loadings!(
             sig = sqrt(1.0 / a11)
             m.W[k1, p] = (b1 / a11) + sig * randn(rng)
         elseif K == 2
+            k1 = ws.act[1]; k2 = ws.act[2]
             a11 = state_alpha[k1]; a12 = 0.0; a22 = state_alpha[k2]
             b1 = 0.0; b2 = 0.0
             for e in 1:E
@@ -80,11 +113,14 @@ function sample_packet_loadings!(
             m.W[k1, p] = mu1 + L11 * z1
             m.W[k2, p] = mu2 + L21 * z1 + L22 * z2
         else
-            A = zeros(MMatrix{4, 4, Float64})
-            b_vec = zeros(MVector{4, Float64})
+            A = view(ws.A, 1:K, 1:K)
+            b_vec = view(ws.b, 1:K)
+            u_vec = view(ws.u, 1:K)
+            z_vec = view(ws.z, 1:K)
+            fill!(A, 0.0)
+            fill!(b_vec, 0.0)
             for r in 1:K
-                r_idx = (r == 1) ? k1 : ((r == 2) ? k2 : ((r == 3) ? k3 : k4))
-                A[r, r] = state_alpha[r_idx]
+                A[r, r] = state_alpha[ws.act[r]]
             end
             for e in 1:E
                 kap = precisions[e][p]
@@ -92,24 +128,22 @@ function sample_packet_loadings!(
                 u = occ_u[e]
                 y = residuals[e][p]
                 for r1 in 1:K
-                    r1_idx = (r1 == 1) ? k1 : ((r1 == 2) ? k2 : ((r1 == 3) ? k3 : k4))
-                    ur1 = u[r1_idx]
+                    ur1 = u[ws.act[r1]]
                     b_vec[r1] += kap * ur1 * y
                     for r2 in 1:K
-                        r2_idx = (r2 == 1) ? k1 : ((r2 == 2) ? k2 : ((r2 == 3) ? k3 : k4))
-                        A[r1, r2] += kap * ur1 * u[r2_idx]
+                        A[r1, r2] += kap * ur1 * u[ws.act[r2]]
                     end
                 end
             end
-            A_sub = SMatrix{K, K, Float64}(view(A, 1:K, 1:K))
-            b_sub = SVector{K, Float64}(view(b_vec, 1:K))
-            cov_sub = inv(A_sub)
-            mu_sub = cov_sub * b_sub
-            C_chol = cholesky(Hermitian(cov_sub))
-            w_samp = mu_sub + C_chol.L * randn(rng, SVector{K, Float64})
+            C = cholesky!(Hermitian(A))
+            ldiv!(u_vec, C, b_vec)
             for r in 1:K
-                r_idx = (r == 1) ? k1 : ((r == 2) ? k2 : ((r == 3) ? k3 : k4))
-                m.W[r_idx, p] = w_samp[r]
+                z_vec[r] = randn(rng)
+            end
+            ldiv!(C.L, z_vec)
+            u_vec .+= z_vec
+            for r in 1:K
+                m.W[ws.act[r], p] = u_vec[r]
             end
         end
     end
@@ -124,6 +158,7 @@ end
 Zero-allocation conjugate Gaussian draw for latent coordinate u_e in R^R:
     u_e | tau_e ~ N(mu_u, Sigma_u)
 where prior precision is scaled by Student-t robustness weight tau_e.
+Operates dynamically for any dimension R with 0 heap allocations.
 """
 function sample_occurrence_coordinate!(
     u_out::Vector{Float64},
@@ -137,18 +172,13 @@ function sample_occurrence_coordinate!(
 )
     P = length(m.packets)
     P == 0 && return
-    R_max = length(active_mask)
+    ws = get_kinematic_workspace()
 
-    k1 = 0; k2 = 0; k3 = 0; k4 = 0
     K = 0
-    @inbounds for r in 1:R_max
+    @inbounds for r in 1:length(active_mask)
         if active_mask[r]
             K += 1
-            if K == 1; k1 = r
-            elseif K == 2; k2 = r
-            elseif K == 3; k3 = r
-            elseif K == 4; k4 = r
-            end
+            ws.act[K] = r
         end
     end
 
@@ -161,6 +191,7 @@ function sample_occurrence_coordinate!(
     @inline p_prec(idx) = (has_prior && length(prior_precisions) >= idx) ? (prior_precisions[idx] * tau_precision) : tau_precision
 
     if K == 1
+        k1 = ws.act[1]
         a11 = p_prec(k1)
         b1 = 0.0
         @inbounds for p in 1:P
@@ -172,8 +203,9 @@ function sample_occurrence_coordinate!(
         end
         sig = sqrt(1.0 / a11)
         u_out[k1] = (b1 / a11) + sig * randn(rng)
-        for r in 1:R_max; r != k1 && (u_out[r] = 0.0); end
+        for r in 1:length(u_out); r != k1 && (u_out[r] = 0.0); end
     elseif K == 2
+        k1 = ws.act[1]; k2 = ws.act[2]
         a11 = p_prec(k1); a12 = 0.0; a22 = p_prec(k2)
         b1 = 0.0; b2 = 0.0
         @inbounds for p in 1:P
@@ -197,38 +229,39 @@ function sample_occurrence_coordinate!(
         z1 = randn(rng); z2 = randn(rng)
         u_out[k1] = mu1 + L11 * z1
         u_out[k2] = mu2 + L21 * z1 + L22 * z2
-        for r in 1:R_max; (r != k1 && r != k2) && (u_out[r] = 0.0); end
+        for r in 1:length(u_out); (r != k1 && r != k2) && (u_out[r] = 0.0); end
     else
-        A = zeros(MMatrix{4, 4, Float64})
-        b_vec = zeros(MVector{4, Float64})
+        A = view(ws.A, 1:K, 1:K)
+        b_vec = view(ws.b, 1:K)
+        u_vec = view(ws.u, 1:K)
+        z_vec = view(ws.z, 1:K)
+        fill!(A, 0.0)
+        fill!(b_vec, 0.0)
         for r in 1:K
-            r_idx = (r == 1) ? k1 : ((r == 2) ? k2 : ((r == 3) ? k3 : k4))
-            A[r, r] = p_prec(r_idx)
+            A[r, r] = p_prec(ws.act[r])
         end
         @inbounds for p in 1:P
             kap = precisions[p]
             kap <= 0.0 && continue
             y = residuals[p]
             for r1 in 1:K
-                r1_idx = (r1 == 1) ? k1 : ((r1 == 2) ? k2 : ((r1 == 3) ? k3 : k4))
-                wr1 = m.W[r1_idx, p]
+                wr1 = m.W[ws.act[r1], p]
                 b_vec[r1] += kap * wr1 * y
                 for r2 in 1:K
-                    r2_idx = (r2 == 1) ? k1 : ((r2 == 2) ? k2 : ((r2 == 3) ? k3 : k4))
-                    A[r1, r2] += kap * wr1 * m.W[r2_idx, p]
+                    A[r1, r2] += kap * wr1 * m.W[ws.act[r2], p]
                 end
             end
         end
-        A_sub = SMatrix{K, K, Float64}(view(A, 1:K, 1:K))
-        b_sub = SVector{K, Float64}(view(b_vec, 1:K))
-        cov_sub = inv(A_sub)
-        mu_sub = cov_sub * b_sub
-        C_chol = cholesky(Hermitian(cov_sub))
-        u_samp = mu_sub + C_chol.L * randn(rng, SVector{K, Float64})
-        for r in 1:R_max; u_out[r] = 0.0; end
+        C = cholesky!(Hermitian(A))
+        ldiv!(u_vec, C, b_vec)
         for r in 1:K
-            r_idx = (r == 1) ? k1 : ((r == 2) ? k2 : ((r == 3) ? k3 : k4))
-            u_out[r_idx] = u_samp[r]
+            z_vec[r] = randn(rng)
+        end
+        ldiv!(C.L, z_vec)
+        u_vec .+= z_vec
+        for r in 1:length(u_out); u_out[r] = 0.0; end
+        for r in 1:K
+            u_out[ws.act[r]] = u_vec[r]
         end
     end
 end
@@ -247,7 +280,7 @@ function sample_global_ard_precisions!(
     P_tot = sum(length(m.packets) for m in motifs)
     a_post = state.a0 + 0.5 * P_tot
 
-    for r in 1:state.R_max
+    for r in 1:length(state.active_mask)
         if state.active_mask[r]
             sum_w2 = 0.0
             for m in motifs
@@ -270,7 +303,7 @@ end
 Prunes dormant manifold dimensions exceeding Cramér-Rao threshold alpha_prune = 6500 s^-2.
 """
 function prune_inactive_axes!(state::ARDManifoldState, motifs::Vector{PurePacketMotif})
-    for r in 1:state.R_max
+    for r in 1:length(state.active_mask)
         if state.active_mask[r]
             if state.alpha[r] > state.prune_threshold
                 state.active_mask[r] = false
@@ -286,7 +319,8 @@ end
 """
     check_and_birth_axis!(state::ARDManifoldState, motifs, occurrences; rng=default_rng(), sigma_threshold=3.0)
 
-Data-driven dimensional birth operator R -> R+1.
+Data-driven dimensional birth operator R -> R+1. Dynamically grows the manifold dimension without
+any arbitrary hardcoded ceiling.
 """
 function check_and_birth_axis!(
     state::ARDManifoldState,
@@ -295,27 +329,9 @@ function check_and_birth_axis!(
     rng::AbstractRNG=Random.default_rng(),
     sigma_threshold::Float64=3.0
 )
-    dormant_r = 0
-    for r in 1:state.R_max
-        if !state.active_mask[r]
-            dormant_r = r
-            break
-        end
-    end
-    dormant_r == 0 && return (false, 1.0)
-
-    k1 = 0; k2 = 0; k3 = 0; k4 = 0
-    K = 0
-    for r in 1:state.R_max
-        if state.active_mask[r]
-            K += 1
-            if K == 1; k1 = r
-            elseif K == 2; k2 = r
-            elseif K == 3; k3 = r
-            elseif K == 4; k4 = r
-            end
-        end
-    end
+    dormant_r = findfirst(!, state.active_mask)
+    need_grow = (dormant_r === nothing)
+    target_r = need_grow ? (length(state.active_mask) + 1) : dormant_r
 
     total_chi2 = 0.0
     dof = 0
@@ -330,10 +346,10 @@ function check_and_birth_axis!(
             mean_t = occ.sum_t[p] / c
             target_t = occ.tau + m.packets[p].mu
             pred_s = 0.0
-            if K == 1; pred_s = m.W[k1, p] * u[k1]
-            elseif K == 2; pred_s = m.W[k1, p] * u[k1] + m.W[k2, p] * u[k2]
-            elseif K == 3; pred_s = m.W[k1, p] * u[k1] + m.W[k2, p] * u[k2] + m.W[k3, p] * u[k3]
-            elseif K == 4; pred_s = m.W[k1, p] * u[k1] + m.W[k2, p] * u[k2] + m.W[k3, p] * u[k3] + m.W[k4, p] * u[k4]
+            @simd for r in 1:min(size(m.W, 1), length(u), length(state.active_mask))
+                if state.active_mask[r]
+                    @inbounds pred_s += m.W[r, p] * u[r]
+                end
             end
             res = (mean_t - target_t) - pred_s
             kap = c / m.packets[p].var
@@ -347,13 +363,39 @@ function check_and_birth_axis!(
     z_score = (total_chi2 - dof) / sqrt(2.0 * dof)
 
     if z_score > sigma_threshold
-        state.active_mask[dormant_r] = true
-        state.alpha[dormant_r] = 500.0
-        for occ in occurrences
-            occ.u[dormant_r] = randn(rng)
-        end
-        for m in values(motifs)
-            @views m.W[dormant_r, :] .= 0.0
+        if need_grow
+            push!(state.active_mask, true)
+            push!(state.alpha, 500.0)
+            state.R_max = length(state.active_mask)
+            for m in values(motifs)
+                P = length(m.packets)
+                new_W = zeros(Float64, state.R_max, P)
+                new_W[1:(state.R_max-1), :] .= m.W
+                m.W = new_W
+            end
+            for occ in occurrences
+                push!(occ.u, randn(rng))
+            end
+        else
+            state.active_mask[target_r] = true
+            state.alpha[target_r] = 500.0
+            for occ in occurrences
+                if target_r <= length(occ.u)
+                    occ.u[target_r] = randn(rng)
+                else
+                    push!(occ.u, randn(rng))
+                end
+            end
+            for m in values(motifs)
+                if target_r <= size(m.W, 1)
+                    @views m.W[target_r, :] .= 0.0
+                else
+                    P = length(m.packets)
+                    new_W = zeros(Float64, target_r, P)
+                    new_W[1:size(m.W, 1), :] .= m.W
+                    m.W = new_W
+                end
+            end
         end
         return (true, chi2_ratio)
     end
