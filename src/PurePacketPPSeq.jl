@@ -26,7 +26,6 @@ export
     AbstractPointProcessEvent,
     NeuronGenerator,
     SpikeEvent,
-    MetaOccurrence,
 
     # Universal m-Mechanisms
     AbstractMechanism,
@@ -43,9 +42,16 @@ export
     KinematicManifold,
     ContinuousOU,
 
-    # n-Scale Hierarchy
+    # Abstract Scale Contract & Concrete Implementations
+    AbstractScale,
     AbstractScaleLevel,
     ScaleLevel,
+    NeuronBaselineScale,
+    NeuralSequenceScale,
+    scale_order,
+    scale_generator_type,
+    scale_timescale,
+    verify_scale_contract,
     active_m_levels,
     is_m_active,
     incoming_data_type,

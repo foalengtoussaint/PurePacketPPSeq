@@ -1068,14 +1068,28 @@ end
         @test Level4KinematicManifold <: AbstractMechanism
         @test Level5ContinuousOU <: AbstractMechanism
 
-        # 2. Scale Level Capability Decomposition
+        # 2. Abstract Scale Contract & Specific Implementations
         s0 = ScaleLevel{0}()
         s1 = ScaleLevel{1}()
-        s2 = ScaleLevel{2}()
+        @test s0 isa AbstractScale
+        @test s1 isa AbstractScale
+        @test NeuronBaselineScale === ScaleLevel{0}
+        @test NeuralSequenceScale === ScaleLevel{1}
 
+        # Contract verification
+        @test verify_scale_contract(s0) == true
+        @test verify_scale_contract(s1) == true
+
+        @test scale_order(s0) == 0
+        @test scale_order(s1) == 1
+        @test scale_generator_type(s0) == NeuronGenerator
+        @test scale_generator_type(s1) == PurePacketMotif
+        @test scale_timescale(s0) == (0.0, Inf)
+        @test scale_timescale(s1) == (0.010, 2.0)
+
+        # 3. Active Mechanism Profiles
         @test active_m_levels(s0) == (0, 5)
         @test active_m_levels(s1) == (0, 1, 2, 3, 4, 5)
-        @test active_m_levels(s2) == (0, 1, 2, 3, 4, 5)
 
         @test is_m_active(s0, 0) == true
         @test is_m_active(s0, 1) == false # Degenerate point emissions at scale 0
@@ -1085,26 +1099,15 @@ end
         @test is_m_active(s0, 5) == true  # Continuous log-gain active
 
         @test all(is_m_active(s1, m) for m in 0:5)
-        @test all(is_m_active(s2, m) for m in 0:5)
 
-        # 3. Input & Output Event Data Contracts
+        # 4. Input & Output Event Data Contracts
         @test incoming_data_type(s0) == SpikeEvent
         @test incoming_data_type(s1) == SpikeEvent
-        @test incoming_data_type(s2) == PureOccurrence
 
         @test outgoing_data_type(s0) == Float64
         @test outgoing_data_type(s1) == PureOccurrence
-        @test outgoing_data_type(s2) == MetaOccurrence
 
-        # MetaOccurrence Constructor
-        meta_occ = MetaOccurrence(1, 10, 100.0, 2; amplitude=1.2)
-        @test meta_occ.id == 1
-        @test meta_occ.meta_motif == 10
-        @test meta_occ.tau == 100.0
-        @test meta_occ.amplitude == 1.2
-        @test isempty(meta_occ.members)
-
-        # 4. Scale-Dispatched Intensity Evaluation
+        # 5. Scale-Dispatched Intensity Evaluation
         ctx_test = ContinuousOUContext(5, 50.0; alpha_c=10.0)
         bg_rates_test = fill(2.0, 5)
 
@@ -1131,6 +1134,6 @@ end
         lam1_far = evaluate_scale_intensity(s1, carrier_test, occ_test, 2, 12.0, active_mask_test)
         @test lam1_far < 1e-10
 
-        println("Scale-dispatched point process intensity verified across Scale n=0, 1, 2.")
+        println("Scale-dispatched point process intensity verified across Scale n=0 and Scale n=1.")
     end
 end
