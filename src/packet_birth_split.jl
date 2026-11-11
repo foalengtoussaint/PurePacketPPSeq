@@ -167,6 +167,39 @@ function prune_dead_packets!(
 
     isempty(dead_packets) && return dead_packets
 
+    # RJMCMC Boundary Reversibility Gate:
+    # Reject death moves if removing an extremal packet leaves it outside the reverse
+    # birth proposal reach of the surviving packets: [delta_left^surv - delta_reach, delta_right^surv + delta_reach]
+    if !isempty(dead_packets) && length(dead_packets) < P
+        survivors_tentative = [p for p in 1:P if !(p in dead_packets)]
+        if !isempty(survivors_tentative)
+            min_surv_mu = minimum(m.packets[p].mu for p in survivors_tentative)
+            max_surv_mu = maximum(m.packets[p].mu for p in survivors_tentative)
+
+            sigma_bar = mean(sqrt(m.packets[p].var) for p in survivors_tentative)
+            delta_reach = max(3.0 * sigma_bar, 0.25)
+            surv_left = minimum(m.packets[p].mu - 4.0 * sqrt(m.packets[p].var) for p in survivors_tentative) - delta_reach
+            surv_right = maximum(m.packets[p].mu + 4.0 * sqrt(m.packets[p].var) for p in survivors_tentative) + delta_reach
+
+            filtered_dead = Int[]
+            for p in dead_packets
+                mu_p = m.packets[p].mu
+                is_extremal = (mu_p < min_surv_mu) || (mu_p > max_surv_mu)
+                if is_extremal
+                    if mu_p < surv_left || mu_p > surv_right
+                        # Packet is strictly outside the reverse birth proposal reach of survivors:
+                        # reject prune to preserve MH detailed balance
+                        continue
+                    end
+                end
+                push!(filtered_dead, p)
+            end
+            dead_packets = filtered_dead
+        end
+    end
+
+    isempty(dead_packets) && return dead_packets
+
     # Check Anchor Handover: is Packet 1 being pruned?
     if 1 in dead_packets
         # Find earliest surviving packet
@@ -317,66 +350,185 @@ function detect_and_birth_or_split_packets!(
 )
     E_m = length(occurrences)
     E_m == 0 && return false
-    W_win = m.W_window
     var_prior = sigma_prior^2
     E_eff = max(sum(occ.amplitude for occ in occurrences; init=0.0), 1.0)
-
-    # Base Occam Volume Penalty for placing a continuous center in window [0, W] and mass prior
-    occam_penalty = log(W_win / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m)
+    occ_dict = Dict(occ.id => occ for occ in occurrences)
+    birthed_any = false
 
     # Rule 2: Exact Marginal Occam Volume for adding R spatial deformation loadings W_{r,p}
+    tax_loadings = 0.0
     if active_mask !== nothing && ard_alphas !== nothing
-        tax_loadings = 0.0
         for r in 1:length(active_mask)
             if active_mask[r]
                 alpha_r = ard_alphas[r]
                 tax_loadings += 0.5 * log(1.0 + E_eff / (max(alpha_r, 1.0) * var_prior))
             end
         end
-        occam_penalty += tax_loadings
     end
 
-    occ_dict = Dict(occ.id => occ for occ in occurrences)
-    birthed_any = false
+    # =============================================================
+    # 1. BIMODAL PACKET SPLIT OPERATOR (Evaluated on Assigned Spikes)
+    # =============================================================
+    if allow_multi_packets && !isempty(m.packets)
+        P_curr = length(m.packets)
+        for p in 1:P_curr
+            pkt = m.packets[p]
+            chan = pkt.channel
+            sig_p = sqrt(pkt.var)
+            split_cand_times = Float64[]
+            split_spk_indices = Int[]
 
-    # Gather candidate spikes for all channels at once
-    chan_cand_times = [Float64[] for _ in 1:N_channels]
-
-    # 1. Candidate spikes from assigned occurrence members with residual > 1.5 sigma_p (Bimodal split candidates)
-    # Point 2 Fix: Subtract latent manifold displacement W_{:,p}^T u_e so continuous warping is not mistaken for bimodal bursting
-    if allow_multi_packets
-        for occ in occurrences
-            u = occ.u
-            for spk_idx in occ.members
-                chan = spike_chan[spk_idx]
-                as = assign[spk_idx]
-                if as.packet_idx > 0 && as.packet_idx <= length(m.packets)
-                    pkt = m.packets[as.packet_idx]
-                    pred_s = 0.0
-                    if active_mask !== nothing
-                        for r in 1:min(length(active_mask), length(u))
-                            if active_mask[r] && r <= size(m.W, 1)
-                                pred_s += m.W[r, as.packet_idx] * u[r]
-                            end
+            # Gather spikes assigned to packet p with residual |dt| > 1.5 * sig_p
+            for occ in occurrences
+                occ.counts[p] == 0 && continue
+                u = occ.u
+                pred_s = 0.0
+                if active_mask !== nothing
+                    for r in 1:min(length(active_mask), length(u))
+                        if active_mask[r] && r <= size(m.W, 1)
+                            pred_s += m.W[r, p] * u[r]
                         end
                     end
-                    pred_t = occ.tau + pkt.mu + pred_s
-                    dt = abs(spike_t[spk_idx] - pred_t)
-                    if dt > 1.5 * sqrt(pkt.var)
-                        push!(chan_cand_times[chan], spike_t[spk_idx] - (occ.tau + pred_s))
+                end
+                pred_t = occ.tau + pkt.mu + pred_s
+                for spk_idx in occ.members
+                    as = assign[spk_idx]
+                    if as.packet_idx == p
+                        dt = abs(spike_t[spk_idx] - pred_t)
+                        if dt > 1.5 * sig_p
+                            push!(split_cand_times, spike_t[spk_idx] - (occ.tau + pred_s))
+                            push!(split_spk_indices, spk_idx)
+                        end
+                    end
+                end
+            end
+
+            N_split_cand = length(split_cand_times)
+            if N_split_cand >= 2
+                sort_idx = sortperm(split_cand_times)
+                cand_sorted = split_cand_times[sort_idx]
+                spk_sorted = split_spk_indices[sort_idx]
+
+                # Support of split proposal is strictly the empirical span of candidate split spikes
+                split_span = max(cand_sorted[end] - cand_sorted[1], 4.0 * sigma_prior)
+                occam_split = log(split_span / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings
+
+                lam0 = bg_rates[chan]
+                best_split_llr = -Inf
+                best_split_mu = 0.0
+                last_split_t = -Inf
+                subsample_step = 0.5 * sigma_prior
+                delta = 3.5 * sigma_prior
+
+                for i in 1:N_split_cand
+                    t_cand = cand_sorted[i]
+                    (t_cand - last_split_t < subsample_step) && continue
+
+                    # Rayleigh bimodality check against existing packet p
+                    rayleigh_dist = max(tau_refractory, 2.0 * sqrt(var_prior + pkt.var))
+                    if abs(t_cand - pkt.mu) < rayleigh_dist
+                        continue
+                    end
+
+                    sum_w = 0.0
+                    for j in 1:N_split_cand
+                        dt = cand_sorted[j] - t_cand
+                        if abs(dt) <= delta
+                            sum_w += exp(-0.5 * (dt * dt) / var_prior)
+                        end
+                    end
+                    a_cand = (alpha_a + sum_w) / (beta_a + E_eff)
+                    llr = 0.0
+                    for j in 1:N_split_cand
+                        dt = cand_sorted[j] - t_cand
+                        if abs(dt) <= delta
+                            bump = a_cand * exp(-0.5 * (dt * dt) / var_prior) / (sqrt(2π) * sigma_prior)
+                            llr += log(1.0 + bump / lam0)
+                        end
+                    end
+                    llr -= E_eff * a_cand
+                    if llr > best_split_llr
+                        best_split_llr = llr
+                        best_split_mu = t_cand
+                    end
+                    last_split_t = t_cand
+                end
+
+                if best_split_llr > occam_split
+                    # Continuous Newton refinement
+                    mu_refined = best_split_mu
+                    g = 0.0; h = 0.0
+                    for j in 1:N_split_cand
+                        dt = cand_sorted[j] - mu_refined
+                        if abs(dt) <= delta
+                            w = exp(-0.5 * (dt * dt) / var_prior)
+                            g += (dt / var_prior) * w
+                            h += ((dt * dt / (var_prior * var_prior)) - (1.0 / var_prior)) * w
+                        end
+                    end
+                    if h < -1e-6
+                        mu_refined += clamp(-g / h, -sigma_prior, sigma_prior)
+                    end
+
+                    # Verify Rayleigh separation on refined center
+                    rayleigh_dist = max(tau_refractory, 2.0 * sqrt(var_prior + pkt.var))
+                    if abs(mu_refined - pkt.mu) >= rayleigh_dist
+                        # Birth split packet P_new
+                        P_new = length(m.packets) + 1
+                        init_mass = (alpha_a + Float64(N_split_cand)) / (beta_a + E_eff)
+                        new_pkt = Packet(P_new, chan, mu_refined, var_prior, max(init_mass, 0.05))
+                        push!(m.packets, new_pkt)
+
+                        R_max = size(m.W, 1)
+                        new_W = zeros(Float64, R_max, P_new)
+                        new_W[:, 1:(P_new-1)] = m.W
+                        m.W = new_W
+                        push!(m.chan_to_packets[chan], P_new)
+
+                        for occ in occurrences
+                            push!(occ.counts, 0)
+                            push!(occ.sum_t, 0.0)
+                            push!(occ.sum_t2, 0.0)
+                        end
+
+                        # Reassign split candidate spikes to new packet
+                        for s_idx in split_spk_indices
+                            old_p = assign[s_idx].packet_idx
+                            eid = assign[s_idx].event_id
+                            occ = occ_dict[eid]
+                            t_s = spike_t[s_idx]
+                            occ.counts[old_p] -= 1
+                            occ.sum_t[old_p] -= t_s
+                            occ.sum_t2[old_p] -= t_s * t_s
+                            assign[s_idx] = SpikeAssignment(eid, P_new)
+                            occ.counts[P_new] += 1
+                            occ.sum_t[P_new] += t_s
+                            occ.sum_t2[P_new] += t_s * t_s
+                        end
+
+                        update_motif_bounds!(m; bg_rates=bg_rates)
+                        birthed_any = true
+                        break
                     end
                 end
             end
         end
     end
 
-    # 2. Candidate spikes from background overlapping occurrences (Birth candidates)
-    # Direct binary search per occurrence: O(E_m) searches instead of O(E_m * N_channels)
-    d_left = min(0.0, m.delta_left)
-    d_right = max(W_win, m.delta_right)
+    # =============================================================
+    # 2. BACKGROUND PACKET BIRTH OPERATOR (Evaluated on Unassigned Spikes)
+    # =============================================================
+    delta_reach = max(3.0 * sigma_prior, 0.25)
+    s_left = m.delta_left - delta_reach
+    s_right = m.delta_right + delta_reach
+    proposal_support = max(s_right - s_left, 2.0 * delta_reach)
+
+    occam_birth = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings
+
+    chan_cand_times = [Float64[] for _ in 1:N_channels]
     for occ in occurrences
-        t_start = max(0.0, occ.tau + d_left)
-        t_end = occ.tau + d_right
+        t_start = max(0.0, occ.tau + s_left)
+        t_end = occ.tau + s_right
         idx_a = searchsortedfirst(spike_t, t_start)
         idx_b = searchsortedlast(spike_t, t_end)
         for s_idx in idx_a:idx_b
@@ -390,7 +542,7 @@ function detect_and_birth_or_split_packets!(
         end
     end
 
-    # Evaluate candidate channels
+    # Evaluate candidate channels for background birth
     for chan in 1:N_channels
         if !allow_multi_packets && length(m.chan_to_packets[chan]) >= 1
             continue
@@ -401,18 +553,14 @@ function detect_and_birth_or_split_packets!(
         lam0 = bg_rates[chan]
         existing_packets = m.chan_to_packets[chan]
 
-        # Sort candidate arrival times for O(N) streaming two-pointer crawl
         sort!(candidate_rel_times)
         N_cand = length(candidate_rel_times)
 
-        # Dynamic Mathematical Gate:
-        # Theoretical upper bound on log-likelihood gain if all spikes fall at Delta t == 0
         max_rate_bump = ((alpha_a + N_cand) / (beta_a + E_eff)) / (sqrt(2π) * sigma_prior)
         max_gain_per_spike = log(1.0 + max_rate_bump / max(lam0, 1e-12))
         max_possible_llr = N_cand * max_gain_per_spike
-        max_possible_llr <= occam_penalty && continue
+        max_possible_llr <= occam_birth && continue
 
-        # Continuous Bayes Factor Search via O(N) Monotonically Advancing Two-Pointer Crawl
         delta = 3.5 * sigma_prior
         subsample_step = 0.5 * sigma_prior
         best_llr = -Inf
@@ -424,11 +572,9 @@ function detect_and_birth_or_split_packets!(
 
         for i in 1:N_cand
             t_cand = candidate_rel_times[i]
-            (t_cand < 0.0 || t_cand > W_win) && continue
-            (t_cand - last_eval_t < subsample_step) && continue # Skip redundant candidates within 0.5 sigma
+            (t_cand < s_left || t_cand > s_right) && continue
+            (t_cand - last_eval_t < subsample_step) && continue
 
-            # Rule 1: Rayleigh / Biophysical Identifiability Gate for candidate split
-            # |mu_1 - mu_2| >= max(tau_refractory, 2 * sqrt(sigma_1^2 + sigma_2^2))
             unimodal_overlap = false
             for p in existing_packets
                 existing_sigma = sqrt(m.packets[p].var)
@@ -441,7 +587,6 @@ function detect_and_birth_or_split_packets!(
             end
             unimodal_overlap && continue
 
-            # Monotonically advance left and right pointers: O(N) amortized streaming
             while left_ptr <= N_cand && candidate_rel_times[left_ptr] < t_cand - delta
                 left_ptr += 1
             end
@@ -449,7 +594,6 @@ function detect_and_birth_or_split_packets!(
                 right_ptr += 1
             end
 
-            # Compact kernel evaluation over strictly local spikes
             sum_w = 0.0
             @inbounds for j in left_ptr:(right_ptr - 1)
                 dt = candidate_rel_times[j] - t_cand
@@ -472,8 +616,7 @@ function detect_and_birth_or_split_packets!(
             last_eval_t = t_cand
         end
 
-        # Single Local Newton-Raphson Step to refine continuous peak
-        if best_llr > occam_penalty
+        if best_llr > occam_birth
             mu_refined = best_mu
             idx_left = searchsortedfirst(candidate_rel_times, mu_refined - delta)
             idx_right = searchsortedlast(candidate_rel_times, mu_refined + delta)
@@ -487,10 +630,9 @@ function detect_and_birth_or_split_packets!(
             end
             if h < -1e-6
                 step = -g / h
-                mu_refined = clamp(mu_refined + clamp(step, -sigma_prior, sigma_prior), 0.0, W_win)
+                mu_refined = clamp(mu_refined + clamp(step, -sigma_prior, sigma_prior), s_left, s_right)
             end
 
-            # Re-verify Rule 1 Rayleigh / Biophysical Identifiability Gate on refined continuous center
             unimodal_overlap = false
             for p in existing_packets
                 existing_sigma = sqrt(m.packets[p].var)
@@ -503,30 +645,24 @@ function detect_and_birth_or_split_packets!(
             end
             unimodal_overlap && continue
 
-            # Birth Packet P_new
+            # Birth Packet P_new from background
             P_new = length(m.packets) + 1
             init_mass = (alpha_a + 1.0) / (beta_a + E_m)
             new_pkt = Packet(P_new, chan, mu_refined, var_prior, max(init_mass, 0.05))
             push!(m.packets, new_pkt)
 
-            # Expand loadings matrix W (new packet initialized with W = 0 to preserve gauge)
             R_max = size(m.W, 1)
             new_W = zeros(Float64, R_max, P_new)
             new_W[:, 1:(P_new-1)] = m.W
             m.W = new_W
-
-            # Register in inverted index
             push!(m.chan_to_packets[chan], P_new)
 
-            # Expand occurrence moment vectors
             for occ in occurrences
                 push!(occ.counts, 0)
                 push!(occ.sum_t, 0.0)
                 push!(occ.sum_t2, 0.0)
             end
 
-            # Atomic Spike Harvest for new packet P_new on channel chan:
-            # Transfers background and bimodal split spikes immediately into occurrences
             sigma_new = sqrt(var_prior)
             spk_list = (chan_spikes !== nothing) ? chan_spikes[chan] : Int[]
             if isempty(spk_list)
@@ -548,44 +684,24 @@ function detect_and_birth_or_split_packets!(
                         j = spk_list[s_idx]
                         as = assign[j]
                         if as.event_id == 0
-                            # Case A: Background spike claimed by new packet
                             assign[j] = SpikeAssignment(occ.id, P_new)
                             push!(occ.members, j)
                             occ.counts[P_new] += 1
                             occ.sum_t[P_new] += spike_t[j]
                             occ.sum_t2[P_new] += spike_t[j] * spike_t[j]
                             harvested_count += 1
-                        elseif as.event_id == occ.id && as.packet_idx != P_new
-                            # Case B: Bimodal split spike currently on an older packet of this occurrence
-                            p_old = as.packet_idx
-                            if p_old > 0 && p_old < P_new
-                                old_mu = occ.tau + m.packets[p_old].mu
-                                dt_old = abs(spike_t[j] - old_mu)
-                                dt_new = abs(spike_t[j] - t_pred)
-                                if dt_new < dt_old
-                                    occ.counts[p_old] -= 1
-                                    occ.sum_t[p_old] -= spike_t[j]
-                                    occ.sum_t2[p_old] -= spike_t[j] * spike_t[j]
-                                    assign[j] = SpikeAssignment(occ.id, P_new)
-                                    occ.counts[P_new] += 1
-                                    occ.sum_t[P_new] += spike_t[j]
-                                    occ.sum_t2[P_new] += spike_t[j] * spike_t[j]
-                                    harvested_count += 1
-                                end
-                            end
                         end
                     end
                 end
             end
 
-            # Update packet mass to exact posterior given harvested spikes
             new_pkt.mass = max((alpha_a + Float64(harvested_count)) / (beta_a + E_eff), 0.05)
             birthed_any = true
         end
     end
 
     if birthed_any
-        update_motif_bounds!(m)
+        update_motif_bounds!(m; bg_rates=bg_rates)
     end
 
     return birthed_any

@@ -1,6 +1,6 @@
 # bounds.jl - Dynamic Motif Bounding Envelopes & Inverted Index
 
-function PurePacketMotif(id::Int, packets::Vector{Packet}, R_max::Int, N_channels::Int; W_window::Float64=2.0)
+function PurePacketMotif(id::Int, packets::Vector{Packet}, R_max::Int, N_channels::Int; W_window::Float64=0.0)
     P = length(packets)
     W = zeros(Float64, R_max, P)
     c2p = [Int[] for _ in 1:N_channels]
@@ -15,17 +15,25 @@ function PurePacketMotif(id::Int, packets::Vector{Packet}, R_max::Int, N_channel
 end
 
 """
-    update_motif_bounds!(m::PurePacketMotif, lambda_min::Vector{Float64}=Float64[]; kappa::Float64=4.0, kappa_u::Float64=3.0)
+    update_motif_bounds!(m::PurePacketMotif, lambda_min::Vector{Float64}=Float64[]; bg_rates::Union{Nothing, Vector{Float64}}=nothing, kappa::Float64=4.0, kappa_u::Float64=3.0)
 
 Dynamically computes:
 1. Channel-Local Bounding Envelopes: m.chan_bounds[k] = (delta_left_k, delta_right_k)
    Evaluated strictly over packets located on channel k, eliminating cross-channel latency coupling.
+   Uses Amplitude-Aware SNR Dominance Radius: R_p = sigma_p * sqrt(2 * ln^+(SNR_p)).
 2. Global Motif Bounding Envelope: m.delta_left, m.delta_right across all channels.
 3. Fast Boolean BitVector: m.chan_active[k] = true iff channel k has active packets.
+4. Dynamic Physical Span: m.W_window = max(m.delta_right - m.delta_left, 0.0).
 
 In-place, zero allocations during sweeps.
 """
-function update_motif_bounds!(m::PurePacketMotif, lambda_min::Vector{Float64}=Float64[]; kappa::Float64=4.0, kappa_u::Float64=3.0)
+function update_motif_bounds!(
+    m::PurePacketMotif,
+    lambda_min::Vector{Float64}=Float64[];
+    bg_rates::Union{Nothing, Vector{Float64}}=nothing,
+    kappa::Float64=4.0,
+    kappa_u::Float64=3.0
+)
     N_chans = length(m.chan_to_packets)
     if length(m.chan_active) != N_chans
         m.chan_active = falses(N_chans)
@@ -37,6 +45,7 @@ function update_motif_bounds!(m::PurePacketMotif, lambda_min::Vector{Float64}=Fl
     if isempty(m.packets)
         m.delta_left = 0.0
         m.delta_right = 0.0
+        m.W_window = 0.0
         fill!(m.chan_bounds, (0.0, 0.0))
         return m
     end
@@ -53,9 +62,20 @@ function update_motif_bounds!(m::PurePacketMotif, lambda_min::Vector{Float64}=Fl
             m.chan_active[k] = true
             c_left = Inf
             c_right = -Inf
+            lam0 = (bg_rates !== nothing && k <= length(bg_rates)) ? max(bg_rates[k], 1e-12) : 0.5
             for p in pkts_k
                 pkt = m.packets[p]
                 sig = sqrt(max(pkt.var, 1e-8))
+
+                # Amplitude-Aware SNR Dominance Radius
+                if bg_rates !== nothing
+                    snr_p = pkt.mass / (sqrt(2π) * sig * lam0)
+                    R_p = (snr_p > 1.0) ? (sig * sqrt(2.0 * log(snr_p))) : 0.0
+                    R_eff = max(R_p, sig)
+                else
+                    R_eff = kappa * sig
+                end
+
                 var_def = 0.0
                 if R > 0 && !isempty(lambda_min)
                     for r in 1:min(R, length(lambda_min))
@@ -63,8 +83,8 @@ function update_motif_bounds!(m::PurePacketMotif, lambda_min::Vector{Float64}=Fl
                     end
                 end
                 delta_p = kappa_u * sqrt(var_def)
-                left_p = pkt.mu - kappa * sig - delta_p
-                right_p = pkt.mu + kappa * sig + delta_p
+                left_p = pkt.mu - R_eff - delta_p
+                right_p = pkt.mu + R_eff + delta_p
                 c_left = min(c_left, left_p)
                 c_right = max(c_right, right_p)
             end
@@ -76,6 +96,7 @@ function update_motif_bounds!(m::PurePacketMotif, lambda_min::Vector{Float64}=Fl
 
     m.delta_left = global_left
     m.delta_right = global_right
+    m.W_window = isfinite(global_right - global_left) ? max(global_right - global_left, 0.0) : 0.0
     return m
 end
 

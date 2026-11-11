@@ -52,7 +52,7 @@ for (mid, m) in b.motifs
         push!(pkts, Packet(p, k, m.mu[k] - orig_shift, m.var[k], max(mass, 0.01)))
     end
 
-    pm = PurePacketMotif(mid, pkts, R_max, N_channels; W_window=2.0)
+    pm = PurePacketMotif(mid, pkts, R_max, N_channels)
     motifs[mid] = pm
 end
 

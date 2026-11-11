@@ -306,8 +306,9 @@ function resample_occurrence_onset!(
 
     if tot_prec > 0.0
         mu_tau = potential / tot_prec
-        max_valid_tau = isfinite(T_max) ? max(0.0, T_max - m.W_window) : Inf
-        occ.tau = clamp(mu_tau + randn(rng) / sqrt(tot_prec), 0.0, max_valid_tau)
+        min_valid_tau = isfinite(T_max) ? max(0.0, -m.delta_left) : 0.0
+        max_valid_tau = isfinite(T_max) ? max(min_valid_tau, T_max - m.delta_right) : Inf
+        occ.tau = clamp(mu_tau + randn(rng) / sqrt(tot_prec), min_valid_tau, max_valid_tau)
     end
 end
 

@@ -350,19 +350,19 @@ end
     # -------------------------------------------------------------
     @testset "Session Boundary Onset Censoring" begin
         p1 = Packet(1, 1, 0.0, 0.0004, 1.0)
-        m = PurePacketMotif(1, [p1], R_max, N_chans; W_window=2.5)
+        m = PurePacketMotif(1, [p1], R_max, N_chans)
         occ = PureOccurrence(1, 1, 98.0, R_max, 1)
         occ.counts[1] = 1
-        # Place spike very close to T_max = 100.0 (e.g. at 99.5)
-        occ.sum_t[1] = 99.5
+        # Place spike very close to T_max = 100.0 (e.g. at 99.95)
+        occ.sum_t[1] = 99.95
 
-        # Resample onset with T_max = 100.0. Since W_window = 2.5, max valid tau is 100.0 - 2.5 = 97.5s
+        # Resample onset with T_max = 100.0. Clamped to [max(0.0, -m.delta_left), T_max - m.delta_right]
         for _ in 1:20
             resample_occurrence_onset!(occ, m, falses(R_max); T_max=100.0, rng=rng)
-            @test occ.tau <= 97.50000001
-            @test occ.tau >= 0.0
+            @test occ.tau <= 100.0 - m.delta_right + 1e-6
+            @test occ.tau >= max(0.0, -m.delta_left) - 1e-6
         end
-        println("Boundary onset successfully clamped <= 97.5s: final tau = ", round(occ.tau, digits=4))
+        println("Dynamic boundary onset successfully clamped <= $(round(100.0 - m.delta_right, digits=4))s: final tau = ", round(occ.tau, digits=4))
     end
 
     # -------------------------------------------------------------

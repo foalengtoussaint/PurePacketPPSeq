@@ -110,9 +110,9 @@ function prune_dead_occurrences!(
             continue
         end
 
-        W = m.W_window
+        W_eff = max(m.delta_right - m.delta_left, 0.05)
         E_m = get(motif_occ_counts, occ.motif, 1)
-        tax_occam = log(max((T_max - W) / W, 1.0)) + log(max((E_m + 1.0) / gamma_m, 1e-3))
+        tax_occam = log(max((T_max - W_eff) / W_eff, 1.0)) + log(max((E_m + 1.0) / gamma_m, 1e-3))
 
         N_e = sum(occ.counts; init=0)
         if N_e == 0
@@ -256,14 +256,14 @@ function detect_and_birth_occurrences!(
     for (mid, m) in motifs
         P = length(m.packets)
         P == 0 && continue
-        W = m.W_window
+        W_eff = max(m.delta_right - m.delta_left, 0.05)
         total_mass = sum(p.mass for p in m.packets; init=0.0)
         E_m = count(occ -> occ.motif == mid, values(occurrences))
         sig_min = minimum(sqrt(p.var) for p in m.packets)
 
-        # Prior Deficit and Occam Volume Tax
+        # Prior Deficit and Occam Volume Tax evaluated with dynamic physical span W_eff
         prior_deficit = alpha_c * log(beta_c / (beta_c + total_mass))
-        tax_occam = log(max((T_max - W) / W, 1.0)) + log(max((E_m + 1.0) / gamma_m, 1e-3))
+        tax_occam = log(max((T_max - W_eff) / W_eff, 1.0)) + log(max((E_m + 1.0) / gamma_m, 1e-3))
         N_min = max(ceil(Int, (abs(prior_deficit) + tax_occam) / 3.5), 2)
 
         # 1. Component Weights for Continuous Mixture Proposal
@@ -285,7 +285,9 @@ function detect_and_birth_occurrences!(
         # Dynamic Physical Stopping Bound L_m* based on single-occurrence sensitivity (alpha = 0.025 for >=95% confidence)
         p_hit_1 = sum_snr / W_m
         L_m_star = max(ceil(Int, log(1.0 / alpha_stopping) / p_hit_1), 100)
-        refract_dist = refractory_fraction * W
+        refract_dist = refractory_fraction * W_eff
+        tau_min = max(0.0, -m.delta_left)
+        tau_max = max(tau_min, T_max - m.delta_right)
 
         c_reject = 0
 
@@ -307,7 +309,7 @@ function detect_and_birth_occurrences!(
             sig_p_star = sqrt(pkt_star.var)
             tau_seed = t_spk - pkt_star.mu + sig_p_star * randn(rng)
 
-            if (tau_seed < 0.0 || tau_seed > (T_max - W))
+            if (tau_seed < tau_min || tau_seed > tau_max)
                 c_reject += 1
                 continue
             end
@@ -343,7 +345,7 @@ function detect_and_birth_occurrences!(
             tau_star = tau_seed
             if abs(hessian) > 1e-9
                 delta_tau = clamp(-score / hessian, -2.0 * sig_min, 2.0 * sig_min)
-                tau_star = clamp(tau_seed + delta_tau, 0.0, T_max - W)
+                tau_star = clamp(tau_seed + delta_tau, tau_min, tau_max)
             end
 
             # Intra-sweep exclusion check
@@ -495,7 +497,7 @@ function detect_and_birth_occurrences!(
             delta_ln_M_star = kernel_sum + gamma_ratio + scale_term + prior_deficit
 
             q_tau = max(q_sum / W_m, 1e-15)
-            ln_R = delta_ln_M_star - tax_occam - log(W * q_tau)
+            ln_R = delta_ln_M_star - tax_occam - log(W_eff * q_tau)
 
             # 6. Competitive Overwrite or Fresh Birth
             incumbent_eid = 0
@@ -531,7 +533,7 @@ function detect_and_birth_occurrences!(
                     push!(intra_sweep_exclusion, (mid, tau_star))
                     n_birthed += 1
                     E_m += 1
-                    tax_occam = log(max((T_max - W) / W, 1.0)) + log(max((E_m + 1.0) / gamma_m, 1e-3))
+                    tax_occam = log(max((T_max - W_eff) / W_eff, 1.0)) + log(max((E_m + 1.0) / gamma_m, 1e-3))
 
                     # ACCEPTED: Reset rejection counter
                     c_reject = 0

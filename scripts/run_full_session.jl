@@ -31,7 +31,7 @@ end
 println(@sprintf("Loaded %d Motifs with %d Active ARD Dimensions (alpha_prune = %.1f s^-2):",
         length(motifs), count(ard_state.active_mask), ard_state.prune_threshold))
 for (mid, pm) in motifs
-    println(@sprintf("  Motif %d: %d packets | Duration W_m = %.3fs", mid, length(pm.packets), pm.W_window))
+    println(@sprintf("  Motif %d: %d packets | Physical Span W_eff = %.3fs [%.3fs, %.3fs]", mid, length(pm.packets), pm.delta_right - pm.delta_left, pm.delta_left, pm.delta_right))
 end
 
 # 2. Load Full Session Pure Neural Spike Dataset (Strictly N=411 Neural Clusters, 0 Behavioral Channels)
