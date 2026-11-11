@@ -1,5 +1,35 @@
 # types.jl - Core Point-Process Data Structures
 
+# =====================================================================
+# ABSTRACT TWO-SCALE MARKED POINT-PROCESS HIERARCHY
+# =====================================================================
+
+abstract type AbstractPointProcessGenerator end
+abstract type AbstractPointProcessEvent end
+
+"""
+    NeuronGenerator <: AbstractPointProcessGenerator
+
+Scale n = 0 Generator: Physical neuron c in 1:N.
+Its ensemble template (m=2) is trivially size 1 (itself), its gauge (m=3) is identity,
+its manifold (m=4) is identity (R=0), and its continuous rate (m=5) is delta_x_c(t).
+"""
+struct NeuronGenerator <: AbstractPointProcessGenerator
+    id::Int                 # Channel index in 1:N
+    region::Int             # 1 for MOp, 2 for CP
+end
+
+"""
+    SpikeEvent <: AbstractPointProcessEvent
+
+Scale n = 0 Event: Physical spike click at time t_i.
+Carries zero internal payload (unmarked).
+"""
+struct SpikeEvent <: AbstractPointProcessEvent
+    t::Float64              # Timestamp in seconds
+    generator_id::Int       # Physical neuron that emitted it
+end
+
 """
     Packet
 
@@ -14,11 +44,11 @@ mutable struct Packet
 end
 
 """
-    PurePacketMotif
+    PurePacketMotif <: AbstractPointProcessGenerator
 
-A motif defined strictly as a collection of P_m packets.
+Scale n = 1 Generator: A motif defined strictly as a collection of P_m packets.
 """
-mutable struct PurePacketMotif
+mutable struct PurePacketMotif <: AbstractPointProcessGenerator
     id::Int
     packets::Vector{Packet}              # Length P_m
     W::Matrix{Float64}                   # R_max x P_m deformation loadings
@@ -32,11 +62,12 @@ end
 
 
 """
-    PureOccurrence
+    PureOccurrence <: AbstractPointProcessEvent
 
-Dense occurrence state tracking only its motif's P_m active packets.
+Scale n = 1 Event: Dense occurrence state tracking only its motif's P_m active packets.
+Marked event carrying internal payload: vigor c_e, spatial coordinate u_e, precision tau_e.
 """
-mutable struct PureOccurrence
+mutable struct PureOccurrence <: AbstractPointProcessEvent
     id::Int
     motif::Int
     tau::Float64                         # Global onset time in seconds

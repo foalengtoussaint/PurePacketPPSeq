@@ -1,4 +1,6 @@
 # Backward compatibility wrapper for legacy scripts
+using Random, Statistics, LinearAlgebra, StaticArrays, Distributions, Printf, SpecialFunctions, Serialization
+
 include("types.jl")
 include("bounds.jl")
 include("kinematics.jl")

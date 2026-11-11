@@ -120,6 +120,115 @@ Evaluates int_{t1}^{t2} lambda_c^(0)(s) ds for Time-Rescaling theorem audit.
 end
 
 """
+    smooth_point_process_intensity!(
+        log_gains::Matrix{Float64},
+        event_times::Vector{Float64},
+        event_generator_ids::Vector{Int},
+        baseline_rates::Vector{Float64},
+        dt::Float64,
+        tau::Float64,
+        sig::Float64,
+        diag_buf::AbstractVector{Float64},
+        off_buf::AbstractVector{Float64},
+        rhs_buf::AbstractVector{Float64},
+        c_prime::AbstractVector{Float64},
+        d_prime::AbstractVector{Float64};
+        active_ids::Union{Nothing, Vector{Int}}=nothing,
+        max_iter::Int=2,
+        zero_mean_gauge::Bool=true,
+        clamp_val::Float64=2.5
+    )
+
+Universal Level m=5 Gauss-Markov Laplace Smoother:
+Operates identically across Scale n=0 (unmarked physical spikes from neurons) and Scale n=1 (marked occurrences from motifs).
+Solves the exact O(B) continuous Newton-Raphson Laplace approximation with zero-mean gauge anchoring.
+"""
+function smooth_point_process_intensity!(
+    log_gains::Matrix{Float64},
+    event_times::Vector{Float64},
+    event_generator_ids::Vector{Int},
+    baseline_rates::Vector{Float64},
+    dt::Float64,
+    tau::Float64,
+    sig::Float64,
+    diag_buf::AbstractVector{Float64},
+    off_buf::AbstractVector{Float64},
+    rhs_buf::AbstractVector{Float64},
+    c_prime::AbstractVector{Float64},
+    d_prime::AbstractVector{Float64};
+    active_ids::Union{Nothing, Vector{Int}}=nothing,
+    max_iter::Int=2,
+    zero_mean_gauge::Bool=true,
+    clamp_val::Float64=2.5
+)
+    E_tot = size(log_gains, 1)
+    B = size(log_gains, 2)
+    B <= 1 && return log_gains
+
+    phi = exp(-dt / tau)
+    v = (0.5 * sig * sig * tau) * (1.0 - phi * phi)
+    v_inf = 0.5 * sig * sig * tau
+    inv_v = 1.0 / max(1e-12, v)
+    inv_v_inf = 1.0 / max(1e-12, v_inf)
+    off_val = -phi * inv_v
+
+    # 1. Linear O(N_events) streaming event accumulation
+    counts = zeros(Int, E_tot, B)
+    N_ev = length(event_times)
+    @inbounds for i in 1:N_ev
+        gid = event_generator_ids[i]
+        (1 <= gid <= E_tot) || continue
+        t = event_times[i]
+        j = clamp(floor(Int, t / dt) + 1, 1, B)
+        counts[gid, j] += 1
+    end
+
+    d_buf = view(diag_buf, 1:B)
+    o_buf = view(off_buf, 1:(B-1))
+    r_buf = view(rhs_buf, 1:B)
+    cp_buf = view(c_prime, 1:B)
+    dp_buf = view(d_prime, 1:B)
+
+    target_ids = active_ids === nothing ? (1:E_tot) : active_ids
+
+    for gid in target_ids
+        (1 <= gid <= E_tot) || continue
+        lam_base = (gid <= length(baseline_rates)) ? max(baseline_rates[gid], 1e-12) : 1e-12
+        lam_base <= 0.0 && continue
+
+        for iter in 1:max_iter
+            @inbounds for j in 1:B
+                dt_eff = (j == 1 || j == B) ? (0.5 * dt) : dt
+                x_val = log_gains[gid, j]
+                d_j = lam_base * dt_eff * exp(x_val)
+
+                j_diag = (j == 1) ? (inv_v_inf + phi * phi * inv_v) : ((j == B) ? inv_v : (1.0 + phi * phi) * inv_v)
+                d_buf[j] = j_diag + d_j
+                if j < B
+                    o_buf[j] = off_val
+                end
+                r_buf[j] = Float64(counts[gid, j]) - d_j + d_j * x_val
+            end
+
+            solve_sym_tridiagonal!(
+                view(log_gains, gid, :),
+                d_buf, o_buf, r_buf, cp_buf, dp_buf
+            )
+        end
+
+        if zero_mean_gauge
+            mean_val = mean(view(log_gains, gid, :))
+            log_gains[gid, :] .-= mean_val
+        end
+        if clamp_val > 0.0
+            clamp!(view(log_gains, gid, :), -clamp_val, clamp_val)
+        end
+    end
+
+    return log_gains
+end
+
+"""
     update_regional_ou!(
         ctx::ContinuousOUContext,
         assign::Vector{SpikeAssignment},
@@ -129,8 +238,7 @@ end
         max_iter::Int=2
     )
 
-Newton-Raphson Laplace smoothing on regional arousal x_region[r, :] for r in {1, 2} (MOp and CP).
-Exact O(B_net) tridiagonal solve via Thomas algorithm.
+Regional arousal x_region[r, :] for r in {1, 2} (MOp and CP) evaluated via smooth_point_process_intensity!.
 """
 function update_regional_ou!(
     ctx::ContinuousOUContext,
@@ -140,80 +248,32 @@ function update_regional_ou!(
     bg_rates::Vector{Float64};
     max_iter::Int=2
 )
-    B = ctx.B_net
-    dt = ctx.dt_net
-    tau = ctx.tau_net
-    sig = ctx.sigma_net
-
-    phi = exp(-dt / tau)
-    v = (0.5 * sig * sig * tau) * (1.0 - phi * phi)
-    v_inf = 0.5 * sig * sig * tau
-    inv_v = 1.0 / max(1e-12, v)
-    inv_v_inf = 1.0 / max(1e-12, v_inf)
-    off_val = -phi * inv_v
-
-    # Sum baseline rates per region
-    lambda_bar_mop = 0.0
-    lambda_bar_cp = 0.0
+    lambda_bar_reg = zeros(Float64, 2)
     for c in 1:length(bg_rates)
         reg = (c <= length(ctx.channel_region)) ? ctx.channel_region[c] : 1
-        if reg == 1
-            lambda_bar_mop += bg_rates[c]
-        else
-            lambda_bar_cp += bg_rates[c]
-        end
+        lambda_bar_reg[reg] += bg_rates[c]
     end
 
     N_spk = length(assign)
-
-    for reg in 1:2
-        lambda_bar = reg == 1 ? lambda_bar_mop : lambda_bar_cp
-        lambda_bar <= 0.0 && continue
-
-        # 1. Accumulate unassigned background spikes for region
-        fill!(view(ctx.counts_buf, 1:B), 0)
-        @inbounds for i in 1:N_spk
-            assign[i].event_id == 0 || continue
+    reg_t = Float64[]
+    reg_ids = Int[]
+    sizehint!(reg_t, N_spk)
+    sizehint!(reg_ids, N_spk)
+    @inbounds for i in 1:N_spk
+        if assign[i].event_id == 0
             c = spike_neurons[i]
-            r_c = (c <= length(ctx.channel_region)) ? ctx.channel_region[c] : 1
-            r_c == reg || continue
-
-            t = spike_t[i]
-            j = clamp(floor(Int, t / dt) + 1, 1, B)
-            ctx.counts_buf[j] += 1
+            reg = (c <= length(ctx.channel_region)) ? ctx.channel_region[c] : 1
+            push!(reg_t, spike_t[i])
+            push!(reg_ids, reg)
         end
-
-        # 2. Newton-Raphson iterations
-        for iter in 1:max_iter
-            @inbounds for j in 1:B
-                dt_eff = (j == 1 || j == B) ? (0.5 * dt) : dt
-                x_val = ctx.x_region[reg, j]
-                d_j = lambda_bar * dt_eff * exp(x_val)
-
-                j_diag = (j == 1) ? (inv_v_inf + phi * phi * inv_v) : ((j == B) ? inv_v : (1.0 + phi * phi) * inv_v)
-
-                ctx.diag_buf[j] = j_diag + d_j
-                if j < B
-                    ctx.off_buf[j] = off_val
-                end
-                ctx.rhs_buf[j] = Float64(ctx.counts_buf[j]) - d_j + d_j * x_val
-            end
-
-            solve_sym_tridiagonal!(
-                view(ctx.x_region, reg, :),
-                view(ctx.diag_buf, 1:B),
-                view(ctx.off_buf, 1:(B-1)),
-                view(ctx.rhs_buf, 1:B),
-                view(ctx.c_prime, 1:B),
-                view(ctx.d_prime, 1:B)
-            )
-        end
-
-        # Zero-mean gauge condition: (1/B) sum x_region == 0
-        mean_x = mean(view(ctx.x_region, reg, :))
-        ctx.x_region[reg, :] .-= mean_x
-        clamp!(view(ctx.x_region, reg, :), -2.5, 2.5)
     end
+
+    smooth_point_process_intensity!(
+        ctx.x_region, reg_t, reg_ids, lambda_bar_reg,
+        ctx.dt_net, ctx.tau_net, ctx.sigma_net,
+        ctx.diag_buf, ctx.off_buf, ctx.rhs_buf, ctx.c_prime, ctx.d_prime;
+        max_iter=max_iter, zero_mean_gauge=true, clamp_val=2.5
+    )
 end
 
 """
@@ -226,7 +286,7 @@ end
         max_iter::Int=2
     )
 
-Newton-Raphson Laplace smoothing on single-cell micro-drift delta_x[c, :] across all units c in 1:C.
+Scale n = 0: Single-cell micro-drift delta_x[c, :] across all units c in 1:C evaluated via smooth_point_process_intensity!.
 """
 function update_cell_ou!(
     ctx::ContinuousOUContext,
@@ -236,63 +296,24 @@ function update_cell_ou!(
     bg_rates::Vector{Float64};
     max_iter::Int=2
 )
-    C = size(ctx.delta_x, 1)
-    B = ctx.B_cell
-    dt = ctx.dt_cell
-    tau = ctx.tau_cell
-    sig = ctx.sigma_cell
-
-    phi = exp(-dt / tau)
-    v = (0.5 * sig * sig * tau) * (1.0 - phi * phi)
-    v_inf = 0.5 * sig * sig * tau
-    inv_v = 1.0 / max(1e-12, v)
-    inv_v_inf = 1.0 / max(1e-12, v_inf)
-    off_val = -phi * inv_v
-
-    cell_counts = zeros(Int, C, B)
     N_spk = length(assign)
+    bg_t = Float64[]
+    bg_c = Int[]
+    sizehint!(bg_t, N_spk)
+    sizehint!(bg_c, N_spk)
     @inbounds for i in 1:N_spk
-        assign[i].event_id == 0 || continue
-        c = spike_neurons[i]
-        (1 <= c <= C) || continue
-        t = spike_t[i]
-        j = clamp(floor(Int, t / dt) + 1, 1, B)
-        cell_counts[c, j] += 1
-    end
-
-    d_buf = view(ctx.diag_buf, 1:B)
-    o_buf = view(ctx.off_buf, 1:(B-1))
-    r_buf = view(ctx.rhs_buf, 1:B)
-    cp_buf = view(ctx.c_prime, 1:B)
-    dp_buf = view(ctx.d_prime, 1:B)
-
-    for c in 1:C
-        lam0 = max(bg_rates[c], 1e-12)
-        for iter in 1:max_iter
-            @inbounds for j in 1:B
-                dt_eff = (j == 1 || j == B) ? (0.5 * dt) : dt
-                x_val = ctx.delta_x[c, j]
-                d_j = lam0 * dt_eff * exp(x_val)
-
-                j_diag = (j == 1) ? (inv_v_inf + phi * phi * inv_v) : ((j == B) ? inv_v : (1.0 + phi * phi) * inv_v)
-                d_buf[j] = j_diag + d_j
-                if j < B
-                    o_buf[j] = off_val
-                end
-                r_buf[j] = Float64(cell_counts[c, j]) - d_j + d_j * x_val
-            end
-
-            solve_sym_tridiagonal!(
-                view(ctx.delta_x, c, :),
-                d_buf, o_buf, r_buf, cp_buf, dp_buf
-            )
+        if assign[i].event_id == 0
+            push!(bg_t, spike_t[i])
+            push!(bg_c, spike_neurons[i])
         end
-
-        # Zero-mean gauge condition: (1/B) sum delta_x == 0
-        mean_dx = mean(view(ctx.delta_x, c, :))
-        ctx.delta_x[c, :] .-= mean_dx
-        clamp!(view(ctx.delta_x, c, :), -2.5, 2.5)
     end
+
+    smooth_point_process_intensity!(
+        ctx.delta_x, bg_t, bg_c, bg_rates,
+        ctx.dt_cell, ctx.tau_cell, ctx.sigma_cell,
+        ctx.diag_buf, ctx.off_buf, ctx.rhs_buf, ctx.c_prime, ctx.d_prime;
+        max_iter=max_iter, zero_mean_gauge=true, clamp_val=2.5
+    )
 end
 
 """
@@ -304,7 +325,7 @@ end
         max_iter::Int=2
     )
 
-Newton-Raphson Laplace smoothing on motif engagement y_motif[m, :] across motifs.
+Scale n = 1: Motif engagement y_motif[m, :] across motifs evaluated via smooth_point_process_intensity!.
 """
 function update_motif_ou!(
     ctx::ContinuousOUContext,
@@ -313,63 +334,16 @@ function update_motif_ou!(
     hyperstate::Level5Hyperstate;
     max_iter::Int=2
 )
-    M = size(ctx.y_motif, 1)
-    B = ctx.B_motif
-    dt = ctx.dt_motif
-    tau = ctx.tau_motif
-    sig = ctx.sigma_motif
+    occ_t = Float64[occ.tau for occ in values(occurrences)]
+    occ_m = Int[occ.motif for occ in values(occurrences)]
+    active_motifs = collect(keys(motifs))
 
-    phi = exp(-dt / tau)
-    v = (0.5 * sig * sig * tau) * (1.0 - phi * phi)
-    v_inf = 0.5 * sig * sig * tau
-    inv_v = 1.0 / max(1e-12, v)
-    inv_v_inf = 1.0 / max(1e-12, v_inf)
-    off_val = -phi * inv_v
-
-    occ_counts = zeros(Int, M, B)
-    for occ in values(occurrences)
-        mid = occ.motif
-        (1 <= mid <= M) || continue
-        j = clamp(floor(Int, occ.tau / dt) + 1, 1, B)
-        occ_counts[mid, j] += 1
-    end
-
-    d_buf = view(ctx.diag_buf, 1:B)
-    o_buf = view(ctx.off_buf, 1:(B-1))
-    r_buf = view(ctx.rhs_buf, 1:B)
-    cp_buf = view(ctx.c_prime, 1:B)
-    dp_buf = view(ctx.d_prime, 1:B)
-
-    for mid in keys(motifs)
-        (1 <= mid <= M) || continue
-        lam_m = (mid <= length(hyperstate.lambda_m)) ? hyperstate.lambda_m[mid] : 1.0
-        lam_m <= 0.0 && continue
-
-        for iter in 1:max_iter
-            @inbounds for j in 1:B
-                dt_eff = (j == 1 || j == B) ? (0.5 * dt) : dt
-                y_val = ctx.y_motif[mid, j]
-                d_j = lam_m * dt_eff * exp(y_val)
-
-                j_diag = (j == 1) ? (inv_v_inf + phi * phi * inv_v) : ((j == B) ? inv_v : (1.0 + phi * phi) * inv_v)
-                d_buf[j] = j_diag + d_j
-                if j < B
-                    o_buf[j] = off_val
-                end
-                r_buf[j] = Float64(occ_counts[mid, j]) - d_j + d_j * y_val
-            end
-
-            solve_sym_tridiagonal!(
-                view(ctx.y_motif, mid, :),
-                d_buf, o_buf, r_buf, cp_buf, dp_buf
-            )
-        end
-
-        # Zero-mean gauge condition: (1/B) sum y_motif == 0
-        mean_y = mean(view(ctx.y_motif, mid, :))
-        ctx.y_motif[mid, :] .-= mean_y
-        clamp!(view(ctx.y_motif, mid, :), -2.5, 2.5)
-    end
+    smooth_point_process_intensity!(
+        ctx.y_motif, occ_t, occ_m, hyperstate.lambda_m,
+        ctx.dt_motif, ctx.tau_motif, ctx.sigma_motif,
+        ctx.diag_buf, ctx.off_buf, ctx.rhs_buf, ctx.c_prime, ctx.d_prime;
+        active_ids=active_motifs, max_iter=max_iter, zero_mean_gauge=true, clamp_val=2.5
+    )
 end
 
 """

@@ -1213,5 +1213,27 @@ end
         update_vigor_shape!(ctx, diverse_occs)
         @test ctx.alpha_c == 10.0
         println("Motor vigor anchor invariant verified: alpha_c strictly anchored at 10.00")
+
+        # 4. Two-Scale Point-Process Invariance Hierarchy
+        @test NeuronGenerator <: AbstractPointProcessGenerator
+        @test PurePacketMotif <: AbstractPointProcessGenerator
+        @test SpikeEvent <: AbstractPointProcessEvent
+        @test PureOccurrence <: AbstractPointProcessEvent
+
+        # Universal smoother invocation across both scales
+        gains_n0 = zeros(Float64, 5, 50)
+        smooth_point_process_intensity!(
+            gains_n0, [1.0, 5.0, 10.0], [1, 2, 3], fill(2.0, 5),
+            1.0, 5.0, 0.5, ctx.diag_buf, ctx.off_buf, ctx.rhs_buf, ctx.c_prime, ctx.d_prime
+        )
+        @test isapprox(mean(gains_n0[1, :]), 0.0, atol=1e-12)
+
+        gains_n1 = zeros(Float64, 3, 50)
+        smooth_point_process_intensity!(
+            gains_n1, [2.0, 8.0], [1, 2], fill(1.0, 3),
+            1.0, 5.0, 0.5, ctx.diag_buf, ctx.off_buf, ctx.rhs_buf, ctx.c_prime, ctx.d_prime
+        )
+        @test isapprox(mean(gains_n1[1, :]), 0.0, atol=1e-12)
+        println("Universal point-process smoother verified across both Scale n=0 and Scale n=1.")
     end
 end

@@ -21,6 +21,12 @@ include("triad_vigor.jl")
 include("metrics.jl")
 
 export
+    # Point-Process Hierarchy & Symmetries
+    AbstractPointProcessGenerator,
+    AbstractPointProcessEvent,
+    NeuronGenerator,
+    SpikeEvent,
+
     Packet,
     PurePacketMotif,
     PureOccurrence,
@@ -82,6 +88,7 @@ export
     # OU Engine
     exp_integral_segment,
     solve_sym_tridiagonal!,
+    smooth_point_process_intensity!,
     evaluate_background_log_intensity,
     update_regional_ou!,
     update_cell_ou!,
