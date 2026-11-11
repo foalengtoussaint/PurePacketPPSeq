@@ -19,6 +19,7 @@ include("mechanisms/m5_ou.jl")
 include("scales.jl")
 include("sampler.jl")
 include("metrics.jl")
+include("data_loader.jl")
 include("inference.jl")
 
 export
@@ -27,6 +28,13 @@ export
     AbstractPointProcessEvent,
     NeuronGenerator,
     SpikeEvent,
+    SpikeDataset,
+
+    # Data Loading & Domain Hygiene
+    load_awake_spikes,
+    load_full_session_spikes,
+    load_seed_motifs,
+    load_checkpoint_motifs,
 
     # Universal m-Mechanisms
     AbstractMechanism,
@@ -133,9 +141,13 @@ export
     print_diagnostics_header,
     print_diagnostics_row,
 
-    # MCMC Sweep Engine
+    # MCMC Sweep Engine & High-Level Fitting
+    PurePacketModel,
+    initialize_scratch_model,
     allocate_thread_buffers,
     allocate_birth_buffers,
-    step_pure_packet_sweep!
+    step_pure_packet_sweep!,
+    persist_checkpoint!,
+    fit!
 
 end # module PurePacketPPSeq

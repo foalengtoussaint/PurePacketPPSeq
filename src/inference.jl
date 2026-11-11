@@ -10,6 +10,100 @@
 #   m=0 (Continuous background rates).
 
 """
+    PurePacketModel
+
+Encapsulates the complete generative state of the Pure Packet marked point-process:
+- `motifs`: Carrier motifs holding spatiotemporal emission packets (m=1, m=2)
+- `occurrences`: Discovered sequence occurrences marked by (tau_e, u_e, c_e)
+- `assign`: Discrete dual-index spike assignments z_i = (e, p) vs (0, 0)
+- `bg_rates`: Continuous baseline rate parameters lambda_{0,c} (m=0)
+- `counts_bg`: Pre-allocated buffer for background spike counts
+- `ard_state`: Continuous kinematic manifold & ARD precisions (m=4)
+- `hyperstate`: Discrete regime tracking hyperstate
+- `ou_ctx`: Continuous OU Conjugate Triad context (m=5)
+- `audit`: Stratified audit channels for Time-Rescaling theorem validation
+- `R_max`: Maximum latent spatial manifold dimension
+- `N_channels`: Total physical units (strictly 411)
+- `T_total`: Recording span in seconds
+- `energy_history`: Vector tracking complete-data joint posterior energy U_t
+- `ks_history`: Vector tracking Time-Rescaling Kolmogorov-Smirnov statistics
+"""
+mutable struct PurePacketModel
+    motifs::Dict{Int, PurePacketMotif}
+    occurrences::Dict{Int, PureOccurrence}
+    assign::Vector{SpikeAssignment}
+    bg_rates::Vector{Float64}
+    counts_bg::Vector{Int}
+    ard_state::ARDManifoldState
+    hyperstate::Level5Hyperstate
+    ou_ctx::ContinuousOUContext
+    audit::NamedTuple
+    R_max::Int
+    N_channels::Int
+    T_total::Float64
+    energy_history::Vector{Float64}
+    ks_history::Vector{Any}
+end
+
+"""
+    initialize_scratch_model(
+        data::SpikeDataset,
+        motifs::Dict{Int, PurePacketMotif};
+        R_max::Int=4,
+        alpha_c::Float64=10.0,
+        nu_student::Float64=4.0
+    ) -> PurePacketModel
+
+Initializes a cold-scratch model instance (0 active occurrences, all spikes in background).
+"""
+function initialize_scratch_model(
+    data::SpikeDataset,
+    motifs::Dict{Int, PurePacketMotif};
+    R_max::Int=4,
+    alpha_c::Float64=10.0,
+    nu_student::Float64=4.0
+)::PurePacketModel
+    N_channels = data.N_channels
+    N_spikes = length(data.t)
+    T_total = data.T_total
+
+    # Cold scratch state: 0 occurrences, all spikes assigned to background (0, 0)
+    occurrences = Dict{Int, PureOccurrence}()
+    assign = [SpikeAssignment(0, 0) for _ in 1:N_spikes]
+    counts_bg = zeros(Int, N_channels)
+
+    # Initialize empirical baseline rates
+    bg_rates = zeros(Float64, N_channels)
+    for c in 1:N_channels
+        bg_rates[c] = max(0.001, Float64(data.total_spikes_per_chan[c]) / max(T_total, 1.0))
+    end
+
+    # Setup ARD Manifold (alpha_prune = 6,500 s^-2) & Continuous OU Triad
+    ard_state = ARDManifoldState(R_max; a0=1e-3, b0=1.0e-6, prune_threshold=6500.0)
+    hyperstate = Level5Hyperstate(1, R_max, max(maximum(keys(motifs); init=1), 50); force_thresh=0.01)
+    ou_ctx = ContinuousOUContext(
+        N_channels, T_total;
+        M_motifs=max(maximum(keys(motifs); init=1), 50),
+        cp_range=99:301,
+        dt_net=0.05, tau_net=0.5, sigma_net=0.4,
+        dt_cell=10.0, tau_cell=60.0, sigma_cell=0.15,
+        dt_motif=5.0, tau_motif=20.0, sigma_motif=0.3,
+        alpha_c=alpha_c, nu_student=nu_student
+    )
+
+    # Stratified Audit Channels for Brown et al. (2002) Time-Rescaling Theorem
+    audit = select_stratified_audit_channels(motifs, bg_rates, N_channels; n_signal=10, n_quiet=10)
+
+    println(@sprintf("Cold Scratch Model Initialized: %d Motifs, 0 Occurrences, %d Background Spikes.", length(motifs), N_spikes))
+    return PurePacketModel(
+        motifs, occurrences, assign, bg_rates, counts_bg,
+        ard_state, hyperstate, ou_ctx, audit,
+        R_max, N_channels, T_total,
+        Float64[], Any[]
+    )
+end
+
+"""
     allocate_thread_buffers(max_threads::Int=Threads.maxthreadid(); rng=Random.default_rng())
 
 Allocates zero-allocation thread-local buffers and PRNGs for parallel spike resampling.
@@ -253,4 +347,148 @@ function step_pure_packet_sweep!(
     update_all_motif_bounds!(motifs)
 
     return (n_birthed = n_birthed, n_overwritten = n_overwritten, n_pruned = n_pruned)
+end
+
+"""
+    persist_checkpoint!(path::String, model::PurePacketModel)
+
+Serializes the complete PurePacketModel state to a native .jls file.
+"""
+function persist_checkpoint!(path::String, model::PurePacketModel)
+    isempty(path) && return
+    open(path, "w") do io
+        serialize(io, (
+            motifs = model.motifs,
+            occurrences = model.occurrences,
+            assign = model.assign,
+            bg_rates = model.bg_rates,
+            ard_state = model.ard_state,
+            hyperstate = model.hyperstate,
+            ou_ctx = model.ou_ctx,
+            energy_history = model.energy_history,
+            ks_history = model.ks_history
+        ))
+    end
+end
+
+"""
+    fit!(
+        model::PurePacketModel,
+        data::SpikeDataset;
+        sweeps::Int=50,
+        checkpoint_path::String="",
+        checkpoint_interval::Int=5,
+        rng::AbstractRNG=Random.default_rng()
+    )
+
+High-level MCMC fitting loop:
+- Allocates thread and birth buffers.
+- Prints telemetry progress table.
+- Runs `step_pure_packet_sweep!` across `1:sweeps`.
+- Periodically evaluates Brown et al. (2002) Time-Rescaling theorem and serializes checkpoints.
+- Prints final summary report across all active universal mechanisms.
+"""
+function fit!(
+    model::PurePacketModel,
+    data::SpikeDataset;
+    sweeps::Int=50,
+    checkpoint_path::String="",
+    checkpoint_interval::Int=5,
+    rng::AbstractRNG=Random.default_rng()
+)
+    # Pre-allocate sweep buffers
+    thread_bufs = allocate_thread_buffers(Threads.maxthreadid(); rng=rng)
+    birth_bufs = allocate_birth_buffers(data.chan_to_spikes)
+
+    println(@sprintf("\nStarting %d Sweeps on marked point-process (T = %.2f s)...", sweeps, data.T_total))
+    print_diagnostics_header()
+
+    try
+        for sweep in 1:sweeps
+            t0_sw = time()
+
+            # Execute single complete MCMC sweep
+            res = step_pure_packet_sweep!(
+                sweep, model.motifs, model.occurrences, model.assign,
+                data.t, data.neuron, data.chan_to_spikes,
+                model.bg_rates, model.counts_bg, model.ard_state, model.ou_ctx,
+                data.T_total, model.R_max,
+                thread_bufs.tl_occ, thread_bufs.tl_pkt, thread_bufs.tl_logw, thread_bufs.tl_rng;
+                bg_times=birth_bufs.bg_times, bg_indices=birth_bufs.bg_indices,
+                rng=rng
+            )
+
+            dt_sw = time() - t0_sw
+
+            # Compute objective sweep diagnostics
+            diag = compute_sweep_diagnostics(
+                sweep, model.motifs, model.occurrences, model.assign,
+                model.bg_rates, model.ard_state, data.T_total,
+                data.total_spikes_per_chan, dt_sw;
+                n_birthed=res.n_birthed, n_pruned=res.n_pruned, ou_ctx=model.ou_ctx
+            )
+            push!(model.energy_history, diag.joint_energy)
+            print_diagnostics_row(diag)
+
+            if sweep <= 2 || sweep % checkpoint_interval == 0
+                println(@sprintf("   --> [OU Gauge Diagnostic] mean(bg_rates)=%.4f Hz | x_reg=[%.3f, %.3f] | dx_cell=[%.3f, %.3f] | alpha_c=%.2f",
+                        mean(model.bg_rates), minimum(model.ou_ctx.x_region), maximum(model.ou_ctx.x_region),
+                        minimum(model.ou_ctx.delta_x), maximum(model.ou_ctx.delta_x), model.ou_ctx.alpha_c))
+            end
+
+            # Periodic Time-Rescaling check and checkpoint persistence
+            if sweep % checkpoint_interval == 0 || sweep == sweeps
+                ks_res = compute_time_rescaling_ks(
+                    model.motifs, model.occurrences, data.t, data.chan_to_spikes,
+                    model.bg_rates, model.audit.all_audit, model.ard_state.active_mask;
+                    ou_ctx=model.ou_ctx
+                )
+                push!(model.ks_history, (sweep = sweep, D_ks = ks_res.D_ks, D_95 = ks_res.D_95, is_valid = ks_res.is_valid, N = ks_res.N_intervals))
+                println(@sprintf("   --> [Audit Time-Rescaling] D_KS: %.5f | 95%% Envelope: %.5f (N=%d) | Status: %s",
+                        ks_res.D_ks, ks_res.D_95, ks_res.N_intervals, ks_res.is_valid ? "SATURATED (Inside 95% Envelope)" : "EXPLORING"))
+
+                if !isempty(checkpoint_path)
+                    persist_checkpoint!(checkpoint_path, model)
+                end
+
+                if sweep >= 25 && length(model.ks_history) >= 3
+                    d1 = abs(model.ks_history[end].D_ks - model.ks_history[end-1].D_ks) / 5.0
+                    d2 = abs(model.ks_history[end-1].D_ks - model.ks_history[end-2].D_ks) / 5.0
+                    max_deriv = max(d1, d2)
+                    if max_deriv < 0.0003
+                        println(@sprintf("   --> [Saturation Monitor] Stationary biological floor reached: D_KS = %.5f (|d D_KS/dt| = %.6f)", ks_res.D_ks, max_deriv))
+                    end
+                end
+            end
+        end
+    finally
+        if !isempty(checkpoint_path)
+            persist_checkpoint!(checkpoint_path, model)
+            println("\nCheckpoint safely persisted to: ", checkpoint_path)
+        end
+    end
+
+    println("\n=================================================================")
+    println("MCMC Execution Completed!")
+    println("=================================================================")
+    final_spikes = count(as -> as.event_id > 0, model.assign)
+    N_spikes = length(data.t)
+    println(@sprintf("Occurrences Discovered from Scratch: %d", length(model.occurrences)))
+    println(@sprintf("Spikes Assigned: %d (%.2f%% foreground mass)", final_spikes, (final_spikes / max(N_spikes, 1)) * 100.0))
+
+    println("\nLevel m=5 Conjugate Triad Final State:")
+    println(@sprintf("  Leg 1 Network Arousal: MOp range [%.3f, %.3f] (var=%.4f) | CP range [%.3f, %.3f] (var=%.4f)",
+            minimum(model.ou_ctx.x_region[1, :]), maximum(model.ou_ctx.x_region[1, :]), var(model.ou_ctx.x_region[1, :]),
+            minimum(model.ou_ctx.x_region[2, :]), maximum(model.ou_ctx.x_region[2, :]), var(model.ou_ctx.x_region[2, :])))
+    println(@sprintf("  Leg 1 Cell Micro-Drift: Mean single-cell var = %.4f across %d units",
+            mean([var(model.ou_ctx.delta_x[c, :]) for c in 1:model.N_channels]), model.N_channels))
+    println(@sprintf("  Leg 2 Motor Vigor Pin: Learned shape alpha_c = %.4f (beta_c == alpha_c => E[c_e] == 1.0)", model.ou_ctx.alpha_c))
+    if !isempty(model.ou_ctx.tau_precisions)
+        prec_vals = collect(values(model.ou_ctx.tau_precisions))
+        println(@sprintf("  Leg 3 Student-t Kinematics: Precisions tau_e: mean=%.3f, min=%.3f, max=%.3f (nu=%.1f)",
+                mean(prec_vals), minimum(prec_vals), maximum(prec_vals), model.ou_ctx.nu_student))
+    end
+    println(@sprintf("Active Kinematic Axes: %d (alpha = %s)", count(model.ard_state.active_mask), string(round.(model.ard_state.alpha[model.ard_state.active_mask], digits=1))))
+
+    return (model = model, energy_history = model.energy_history, ks_history = model.ks_history)
 end
