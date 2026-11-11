@@ -4,11 +4,17 @@
 
 using Random, Printf, NPZ, Serialization, Statistics, LinearAlgebra
 
+# Load legacy struct definitions for initial seed dictionary checkpoint
+include("/home/foaleng/Downloads/mop_awake_ppseq/custom_sampler/regime_triad_sampler/run_regime_sampler.jl")
 include(joinpath(@__DIR__, "..", "src", "pure_packet_engine.jl"))
 
-const DATA_PATH = joinpath(@__DIR__, "..", "data", "awake.npz")
-const CHECKPOINT_PATH = joinpath(@__DIR__, "..", "checkpoints", "checkpoint_pure_packet_scratch_50sweeps.jls")
+const BASE_CK_PATH = "/home/foaleng/Downloads/mop_awake_ppseq/custom_sampler/results/top4_task_20261008/mh_screening_experiment/regime_triad_reproduction_100s/checkpoint.jls"
+ck = open(deserialize, BASE_CK_PATH)
+s = ck.state
+b = s.base
 
+R_max = 4
+N_channels = 411
 neural_spike_indices = findall(c -> 1 <= c <= N_channels, b.neuron)
 spike_t = b.t[neural_spike_indices]
 spike_neuron = b.neuron[neural_spike_indices]

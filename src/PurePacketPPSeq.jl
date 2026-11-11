@@ -18,13 +18,39 @@ include("gibbs_resample.jl")
 include("ou_engine.jl")
 include("triad_vigor.jl")
 include("metrics.jl")
+include("scales.jl")
 
 export
-    # Point-Process Hierarchy & Symmetries
+    # Point-Process Hierarchy & Mechanisms
     AbstractPointProcessGenerator,
     AbstractPointProcessEvent,
     NeuronGenerator,
     SpikeEvent,
+    MetaOccurrence,
+
+    # m-Mechanisms
+    AbstractMechanism,
+    Level0RateFloor,
+    Level1EmissionPacket,
+    Level2CarrierComposition,
+    Level3GaugeSymmetry,
+    Level4KinematicManifold,
+    Level5ContinuousOU,
+    RateFloor,
+    EmissionPacketMechanism,
+    CarrierComposition,
+    GaugeSymmetry,
+    KinematicManifold,
+    ContinuousOU,
+
+    # n-Scale Hierarchy
+    AbstractScaleLevel,
+    ScaleLevel,
+    active_m_levels,
+    is_m_active,
+    incoming_data_type,
+    outgoing_data_type,
+    evaluate_scale_intensity,
 
     Packet,
     PurePacketMotif,

@@ -1055,4 +1055,82 @@ end
         @test isapprox(mean(gains_n1[1, :]), 0.0, atol=1e-12)
         println("Universal point-process smoother verified across both Scale n=0 and Scale n=1.")
     end
+
+    # -------------------------------------------------------------
+    # TEST 16: SCALE n INVARIANCE & UNIVERSAL m-MECHANISMS ENCODING
+    # -------------------------------------------------------------
+    @testset "Scale n Invariance & Universal m-Mechanisms Encoding" begin
+        # 1. Mechanism Class Hierarchy
+        @test Level0RateFloor <: AbstractMechanism
+        @test Level1EmissionPacket <: AbstractMechanism
+        @test Level2CarrierComposition <: AbstractMechanism
+        @test Level3GaugeSymmetry <: AbstractMechanism
+        @test Level4KinematicManifold <: AbstractMechanism
+        @test Level5ContinuousOU <: AbstractMechanism
+
+        # 2. Scale Level Capability Decomposition
+        s0 = ScaleLevel{0}()
+        s1 = ScaleLevel{1}()
+        s2 = ScaleLevel{2}()
+
+        @test active_m_levels(s0) == (0, 5)
+        @test active_m_levels(s1) == (0, 1, 2, 3, 4, 5)
+        @test active_m_levels(s2) == (0, 1, 2, 3, 4, 5)
+
+        @test is_m_active(s0, 0) == true
+        @test is_m_active(s0, 1) == false # Degenerate point emissions at scale 0
+        @test is_m_active(s0, 2) == false # Degenerate single-spike carrier at scale 0
+        @test is_m_active(s0, 3) == false # Degenerate identity gauge at scale 0
+        @test is_m_active(s0, 4) == false # Degenerate zero-dim kinematics at scale 0
+        @test is_m_active(s0, 5) == true  # Continuous log-gain active
+
+        @test all(is_m_active(s1, m) for m in 0:5)
+        @test all(is_m_active(s2, m) for m in 0:5)
+
+        # 3. Input & Output Event Data Contracts
+        @test incoming_data_type(s0) == SpikeEvent
+        @test incoming_data_type(s1) == SpikeEvent
+        @test incoming_data_type(s2) == PureOccurrence
+
+        @test outgoing_data_type(s0) == Float64
+        @test outgoing_data_type(s1) == PureOccurrence
+        @test outgoing_data_type(s2) == MetaOccurrence
+
+        # MetaOccurrence Constructor
+        meta_occ = MetaOccurrence(1, 10, 100.0, 2; amplitude=1.2)
+        @test meta_occ.id == 1
+        @test meta_occ.meta_motif == 10
+        @test meta_occ.tau == 100.0
+        @test meta_occ.amplitude == 1.2
+        @test isempty(meta_occ.members)
+
+        # 4. Scale-Dispatched Intensity Evaluation
+        ctx_test = ContinuousOUContext(5, 50.0; alpha_c=10.0)
+        bg_rates_test = fill(2.0, 5)
+
+        # Scale 0 continuous background intensity
+        lam0 = evaluate_scale_intensity(s0, 1, 25.0, bg_rates_test, ctx_test)
+        @test lam0 > 0.0
+        @test isapprox(lam0, 2.0, atol=0.5)
+
+        # Scale 1 spatiotemporal foreground intensity
+        p_test = Packet(1, 2, 0.050, 0.0001, 1.5) # Chan 2, mu=50ms, sigma=10ms, mass=1.5
+        carrier_test = PurePacketMotif(1, [p_test], 2, 5)
+        occ_test = PureOccurrence(1, 1, 10.0, 2, 1; amplitude=1.2)
+        active_mask_test = falses(2)
+
+        # Near packet peak (t = 10.0 + 0.050 = 10.050s) on channel 2
+        lam1_peak = evaluate_scale_intensity(s1, carrier_test, occ_test, 2, 10.050, active_mask_test)
+        @test lam1_peak > 50.0 # High intensity at kernel peak
+
+        # Different channel (channel 1) has 0 intensity
+        lam1_other_chan = evaluate_scale_intensity(s1, carrier_test, occ_test, 1, 10.050, active_mask_test)
+        @test lam1_other_chan == 0.0
+
+        # Far away in time (t = 12.0s) has negligible intensity
+        lam1_far = evaluate_scale_intensity(s1, carrier_test, occ_test, 2, 12.0, active_mask_test)
+        @test lam1_far < 1e-10
+
+        println("Scale-dispatched point process intensity verified across Scale n=0, 1, 2.")
+    end
 end
