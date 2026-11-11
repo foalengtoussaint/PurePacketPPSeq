@@ -1,39 +1,17 @@
-# kinematics.jl - Continuous Spatial Manifold & Translational Gauge
-
-# =====================================================================
-# 3. CONJUGATE GIBBS CONDITIONALS
-# =====================================================================
-
-"""
-    project_translational_gauge!(m::PurePacketMotif, active_mask::BitVector)
-
-Enforces exact translational gauge invariance:
-    sum_{p=1}^{P_m} kappa_{m,p} W_{r,p} = 0
-for all active ARD axes r in 1:R_max.
-"""
-function project_translational_gauge!(m::PurePacketMotif, active_mask::BitVector)
-    P = length(m.packets)
-    P == 0 && return
-    R_max = length(active_mask)
-    tot_prec = sum(1.0 / m.packets[p].var for p in 1:P)
-    tot_prec <= 0.0 && return
-
-    for r in 1:R_max
-        if active_mask[r]
-            w_mean = sum((1.0 / m.packets[p].var) * m.W[r, p] for p in 1:P) / tot_prec
-            @views m.W[r, :] .-= w_mean
-        else
-            @views m.W[r, :] .= 0.0
-        end
-    end
-end
-
+# mechanisms/m4_manifold.jl - Level m=4 Continuous Latent Kinematics & ARD Manifold
+#
+# Generative Role:
+# - Continuous low-dimensional temporal warping:
+#     mu_{e,p} = tau_e + mu_p + sum_r W_{r,p} u_{e,r}
+# - Zero-allocation analytical solve for occurrence coordinate u_e in R^R.
+# - Conjugate Gaussian draws for carrier loadings W_{r,p}.
+# - Automatic Relevance Determination (ARD) manifold precisions alpha_r.
+# - Cramér-Rao manifold pruning: deactivates axes exceeding alpha_prune = 6500 s^-2.
 
 """
-    sample_packet_loadings!(m::PurePacketMotif, state_alpha, active_mask, occ_u, residuals, precisions; rng)
+    sample_packet_loadings!(m::PurePacketMotif, state_alpha, active_mask, occ_u, residuals, precisions; rng=default_rng())
 
-Conjugate Gaussian draw for W_{r,p} with exact translational gauge projection:
-    sum_{p=1}^{P_m} kappa_{m,p} W_{r,p} = 0
+Conjugate Gaussian draw for manifold loadings W_{r,p} followed by exact translational gauge projection.
 """
 function sample_packet_loadings!(
     m::PurePacketMotif,
@@ -102,7 +80,6 @@ function sample_packet_loadings!(
             m.W[k1, p] = mu1 + L11 * z1
             m.W[k2, p] = mu2 + L21 * z1 + L22 * z2
         else
-            # K >= 3: unrolled block inversion
             A = zeros(MMatrix{4, 4, Float64})
             b_vec = zeros(MVector{4, Float64})
             for r in 1:K
@@ -142,9 +119,11 @@ function sample_packet_loadings!(
 end
 
 """
-    sample_occurrence_coordinate!(u_out, m::PurePacketMotif, active_mask, res, prec; prior_precisions, rng)
+    sample_occurrence_coordinate!(u_out, m, active_mask, residuals, precisions; prior_precisions=nothing, tau_precision=1.0, rng=default_rng())
 
-Conjugate Gaussian draw for u_e in R^R (0 heap allocations).
+Zero-allocation conjugate Gaussian draw for latent coordinate u_e in R^R:
+    u_e | tau_e ~ N(mu_u, Sigma_u)
+where prior precision is scaled by Student-t robustness weight tau_e.
 """
 function sample_occurrence_coordinate!(
     u_out::Vector{Float64},
@@ -254,73 +233,12 @@ function sample_occurrence_coordinate!(
     end
 end
 
-
 """
-    resample_occurrence_onset!(occ::PureOccurrence, m::PurePacketMotif, active_mask; T_max=Inf, rng)
+    sample_global_ard_precisions!(state::ARDManifoldState, motifs::Vector{PurePacketMotif}; rng=default_rng())
 
-Exact conjugate Gaussian Gibbs draw for occurrence onset tau_e subtracting manifold deformation s_v(p):
-    tau_e ~ N(mu_tau, 1 / tot_prec)
+Conjugate Gamma draws for ARD precision hyperprior:
+    alpha_r ~ Gamma(a_0 + 0.5 * sum_m P_m, 1.0 / (b_0 + 0.5 * sum_{m,p} W_{r,p}^2)).
 """
-function resample_occurrence_onset!(
-    occ::PureOccurrence,
-    m::PurePacketMotif,
-    active_mask::BitVector;
-    T_max::Float64=Inf,
-    rng::AbstractRNG=Random.default_rng()
-)
-    P = length(m.packets)
-    P == 0 && return
-
-    k1 = 0; k2 = 0; k3 = 0; k4 = 0
-    K = 0
-    for r in 1:length(active_mask)
-        if active_mask[r]
-            K += 1
-            if K == 1; k1 = r
-            elseif K == 2; k2 = r
-            elseif K == 3; k3 = r
-            elseif K == 4; k4 = r
-            end
-        end
-    end
-
-    potential = 0.0
-    tot_prec = 0.0
-    u = occ.u
-
-    for p in 1:P
-        c = occ.counts[p]
-        c == 0 && continue
-        pkt = m.packets[p]
-        sig2 = pkt.var
-        v_inv = c / sig2
-        pred_s = 0.0
-        if K == 1; pred_s = m.W[k1, p] * u[k1]
-        elseif K == 2; pred_s = m.W[k1, p] * u[k1] + m.W[k2, p] * u[k2]
-        elseif K == 3; pred_s = m.W[k1, p] * u[k1] + m.W[k2, p] * u[k2] + m.W[k3, p] * u[k3]
-        elseif K == 4; pred_s = m.W[k1, p] * u[k1] + m.W[k2, p] * u[k2] + m.W[k3, p] * u[k3] + m.W[k4, p] * u[k4]
-        end
-        tot_prec += v_inv
-        potential += (v_inv / c) * (occ.sum_t[p] - c * (pkt.mu + pred_s))
-    end
-
-    if tot_prec > 0.0
-        mu_tau = potential / tot_prec
-        min_valid_tau = isfinite(T_max) ? max(0.0, -m.delta_left) : 0.0
-        max_valid_tau = isfinite(T_max) ? max(min_valid_tau, T_max - m.delta_right) : Inf
-        occ.tau = clamp(mu_tau + randn(rng) / sqrt(tot_prec), min_valid_tau, max_valid_tau)
-    end
-end
-
-
-"""
-    sample_packet_masses!(m::PurePacketMotif, occurrences::Vector{PureOccurrence}; alpha_a=1.0, beta_a=1.0, rng)
-
-Conjugate Gamma draw for packet emission mass a_{m,p}:
-    a_{m,p} ~ Gamma(alpha_a + c_{m,p}, 1.0 / (beta_a + E_tilde))
-where E_tilde = sum_{e in E_m} c_e is the total integrated occurrence gain and c_{m,p} is the total assigned spike count.
-"""
-
 function sample_global_ard_precisions!(
     state::ARDManifoldState,
     motifs::Vector{PurePacketMotif};
@@ -346,7 +264,11 @@ function sample_global_ard_precisions!(
     end
 end
 
+"""
+    prune_inactive_axes!(state::ARDManifoldState, motifs::Vector{PurePacketMotif})
 
+Prunes dormant manifold dimensions exceeding Cramér-Rao threshold alpha_prune = 6500 s^-2.
+"""
 function prune_inactive_axes!(state::ARDManifoldState, motifs::Vector{PurePacketMotif})
     for r in 1:state.R_max
         if state.active_mask[r]
@@ -361,7 +283,11 @@ function prune_inactive_axes!(state::ARDManifoldState, motifs::Vector{PurePacket
     end
 end
 
+"""
+    check_and_birth_axis!(state::ARDManifoldState, motifs, occurrences; rng=default_rng(), sigma_threshold=3.0)
 
+Data-driven dimensional birth operator R -> R+1.
+"""
 function check_and_birth_axis!(
     state::ARDManifoldState,
     motifs::Dict{Int, PurePacketMotif},
@@ -434,7 +360,3 @@ function check_and_birth_axis!(
 
     return (false, chi2_ratio)
 end
-
-# =====================================================================
-# 9. LEVEL m=5 TASK REGIMES & HYPERSTATE
-# =====================================================================

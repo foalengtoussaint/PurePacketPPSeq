@@ -1,5 +1,32 @@
-# packet_birth_split.jl - Nonparametric Packet Birth, Split & Pruning
+# mechanisms/m1_packet.jl - Level m=1 Pure Spatiotemporal Emission Packets
+#
+# Generative Role:
+# - Unit marked point-process kernel on physical neuron c_p:
+#     lambda_{m,p}(t) = a_{m,p} * N(t; tau_e + mu_p + W_{:,p}^T u_e, sigma_p^2)
+# - Parameterizes emission mass a_{m,p}, canonical latency mu_p, and jitter variance var_p = sigma_p^2.
+# - Governs SNR dominance radius: R_p = sigma_p * sqrt(2 * ln^+(SNR_p)).
+# - Executes continuous Bayes factor bimodal split and background packet birth.
 
+"""
+    compute_packet_snr_radius(mass::Float64, var_p::Float64, bg_rate::Float64) -> Float64
+
+Evaluates the exact physical SNR dominance radius of an emission packet:
+    R_p = sigma_p * sqrt(2 * ln^+( a_{m,p} / (sqrt(2pi) * sigma_p * lambda_{0,c}) ))
+where R_p == 0.0 whenever SNR_p <= 1.0 (Rule 3 SNR pruning from first principles).
+"""
+@inline function compute_packet_snr_radius(mass::Float64, var_p::Float64, bg_rate::Float64)::Float64
+    sig = sqrt(max(var_p, 1e-8))
+    lam0 = max(bg_rate, 1e-12)
+    snr = mass / (sqrt(2π) * sig * lam0)
+    return (snr > 1.0) ? (sig * sqrt(2.0 * log(snr))) : 0.0
+end
+
+"""
+    sample_packet_masses!(m::PurePacketMotif, occurrences::Vector{PureOccurrence}; alpha_a=1.0, beta_a=1.0, rng=default_rng())
+
+Conjugate Gamma draws for packet emission amplitudes a_{m,p}:
+    a_{m,p} ~ Gamma(alpha_a + sum_e c_{e,p}, 1 / (beta_a + sum_e c_e)).
+"""
 function sample_packet_masses!(
     m::PurePacketMotif,
     occurrences::Vector{PureOccurrence};
@@ -10,7 +37,6 @@ function sample_packet_masses!(
     P = length(m.packets)
     P == 0 && return
 
-    # Effective trial exposure is sum_{e in E_m} c_e
     E_tilde = sum(occ.amplitude for occ in occurrences; init=0.0)
     rate_post = beta_a + max(E_tilde, 1e-4)
     scale_post = 1.0 / rate_post
@@ -22,16 +48,12 @@ function sample_packet_masses!(
     end
 end
 
-
 """
-    sample_occurrence_amplitudes!(occurrences, motifs; alpha_c=25.0, rng)
+    update_packet_corridors!(m::PurePacketMotif, occurrences::Vector{PureOccurrence}, active_mask::BitVector; anchor_origin=true, damp=0.2, nu_0=10.0, S_0=0.00025)
 
-Conjugate Gamma draw for occurrence amplitudes c_e:
-    c_e ~ Gamma(alpha_c + N_e, 1.0 / (alpha_c + sum_{p} a_{m_e, p}))
-where N_e = sum_p counts[p] is the total assigned spike count, and sum_p a_{m_e, p} is the total active packet mass.
-Alpha_c >= 20 clamps the ensemble mean strictly to 1.00 +- 0.02, preventing hyperbolic scale drift c_e * a_{m,p} = const.
+Updates packet canonical latencies mu_p and jitter variances var_p with origin anchoring mu_1 == 0.
+Returns the origin_offset shift absorbed by occurrences.
 """
-
 function update_packet_corridors!(
     m::PurePacketMotif,
     occurrences::Vector{PureOccurrence},
@@ -78,21 +100,18 @@ function update_packet_corridors!(
             target_t = occ.tau + pkt.mu + pred_s
             weighted_delta += (mean_t - target_t) * c
             tot_c += c
-            # Sufficient variance residual: sum (t_i - target_t)^2 = sum_t2 - 2 target sum_t + c target^2
             sq_err = occ.sum_t2[p] - 2.0 * target_t * occ.sum_t[p] + c * target_t * target_t
             sum_sq_err += max(0.0, sq_err)
         end
 
         if tot_c > 0
             pkt.mu += damp * (weighted_delta / tot_c)
-            # Conjugate Inverse-Gamma update for packet variance
             nu_post = nu_0 + tot_c
             S_post = S_0 + sum_sq_err
             pkt.var = S_post / nu_post
         end
     end
 
-    # Anchor origin: Packet 1 is locked to identically 0.0000 s
     origin_offset = 0.0
     if anchor_origin && P > 0
         origin_offset = m.packets[1].mu
@@ -106,31 +125,14 @@ function update_packet_corridors!(
         end
     end
 
-    update_motif_bounds!(m)
     return origin_offset
 end
 
-# =====================================================================
-# 4. NONPARAMETRIC DEATH: MASS COLLAPSE & ANCHOR HANDOVER
-# =====================================================================
-
 """
-    prune_dead_packets!(
-        m::PurePacketMotif,
-        occurrences::Vector{PureOccurrence},
-        bg_rates::Vector{Float64},
-        N_channels::Int;
-        assign::Union{Nothing, Vector{SpikeAssignment}}=nothing,
-        occam_tax::Float64=2.0
-    )
+    prune_dead_packets!(m::PurePacketMotif, occurrences::Vector{PureOccurrence}, bg_rates::Vector{Float64}, N_channels::Int; assign=nothing, occam_tax=2.0)
 
-Prunes packets whose peak instantaneous firing rate drops below the Poisson background floor (SNR_p <= 1.0):
-    SNR_p = lambda_peak / lambda_0(k_p) = (a_{m,p} / (sqrt(2pi) * sigma_p)) / lambda_0(k_p) <= 1.0
-Or whose empirical count is zero and cannot clear the background rate floor.
-Executes the ANCHOR HANDOVER rule if Packet 1 dies:
-    tau_e += mu_{p_next}, mu_p -= mu_{p_next}
-Releases assigned spikes of dead packets back to background: assign[i] = (0, 0).
-Rebuilds inverted index, atomically shrinks motif total mass A_m, and updates dense occurrence moment vectors.
+RJMCMC death operator for dead emission packets.
+Enforces Rule 3 SNR death condition (SNR_p <= 1.0) with detailed-balance reverse proposal check.
 """
 function prune_dead_packets!(
     m::PurePacketMotif,
@@ -153,10 +155,6 @@ function prune_dead_packets!(
         lambda_peak = pkt.mass / (sqrt(2π) * sigma_p)
         snr_p = lambda_peak / lam0
 
-        # Exact SNR Death Condition (Rule 3):
-        # A packet whose peak firing rate cannot beat Poisson background (SNR <= 1.0)
-        # provides negative log-likelihood to spikes while adding useless compensator mass.
-        # Also prune if zero assigned spikes and empirical rate cannot clear background floor.
         rate_empirical = c_tot / E_eff
         bg_floor = lam0 * sqrt(2π) * sigma_p
 
@@ -167,9 +165,7 @@ function prune_dead_packets!(
 
     isempty(dead_packets) && return dead_packets
 
-    # RJMCMC Boundary Reversibility Gate:
-    # Reject death moves if removing an extremal packet leaves it outside the reverse
-    # birth proposal reach of the surviving packets: [delta_left^surv - delta_reach, delta_right^surv + delta_reach]
+    # Detailed balance reversibility check against reverse birth proposal reach
     if !isempty(dead_packets) && length(dead_packets) < P
         survivors_tentative = [p for p in 1:P if !(p in dead_packets)]
         if !isempty(survivors_tentative)
@@ -187,8 +183,6 @@ function prune_dead_packets!(
                 is_extremal = (mu_p < min_surv_mu) || (mu_p > max_surv_mu)
                 if is_extremal
                     if mu_p < surv_left || mu_p > surv_right
-                        # Packet is strictly outside the reverse birth proposal reach of survivors:
-                        # reject prune to preserve MH detailed balance
                         continue
                     end
                 end
@@ -200,9 +194,8 @@ function prune_dead_packets!(
 
     isempty(dead_packets) && return dead_packets
 
-    # Check Anchor Handover: is Packet 1 being pruned?
+    # Anchor Handover if Packet 1 pruned
     if 1 in dead_packets
-        # Find earliest surviving packet
         first_survivor = 0
         for p in 1:P
             if !(p in dead_packets)
@@ -212,21 +205,17 @@ function prune_dead_packets!(
         end
         if first_survivor > 0
             handover_shift = m.packets[first_survivor].mu
-            # Anchor Handover: all surviving packets shift by -handover_shift
             for p in 1:P
                 m.packets[p].mu -= handover_shift
             end
-            # All occurrences absorb this exact shift: tau_e += handover_shift
             for occ in occurrences
                 occ.tau += handover_shift
             end
         end
     end
 
-    # Build survivors
     survivors = [p for p in 1:P if !(p in dead_packets)]
     if isempty(survivors)
-        # Never prune all packets; retain the one with highest mass
         survivors = [argmax([pkt.mass for pkt in m.packets])]
     end
 
@@ -245,7 +234,6 @@ function prune_dead_packets!(
     m.W = new_W
     rebuild_inverted_index!(m, N_channels)
 
-    # Remap spike assignments and update occurrence moment vectors
     old_to_new = zeros(Int, P)
     for (new_p, old_p) in enumerate(survivors)
         old_to_new[old_p] = new_p
@@ -253,83 +241,51 @@ function prune_dead_packets!(
 
     if assign !== nothing
         for occ in occurrences
-            surviving_members = Int[]
-            for spk_idx in occ.members
-                old_p = assign[spk_idx].packet_idx
-                if old_p > 0 && old_p <= P
-                    new_p = old_to_new[old_p]
-                    if new_p > 0
-                        assign[spk_idx] = SpikeAssignment(occ.id, new_p)
-                        push!(surviving_members, spk_idx)
+            i = 1
+            while i <= length(occ.members)
+                s_idx = occ.members[i]
+                as = assign[s_idx]
+                if as.event_id == occ.id
+                    old_p = as.packet_idx
+                    if old_p in dead_packets
+                        assign[s_idx] = SpikeAssignment(0, 0)
+                        deleteat!(occ.members, i)
+                        continue
                     else
-                        assign[spk_idx] = SpikeAssignment(0, 0)
+                        assign[s_idx] = SpikeAssignment(occ.id, old_to_new[old_p])
                     end
                 end
+                i += 1
             end
-            occ.members = surviving_members
         end
     end
 
     for occ in occurrences
-        new_counts = [occ.counts[old_p] for old_p in survivors]
-        new_sum_t = [occ.sum_t[old_p] for old_p in survivors]
-        new_sum_t2 = [occ.sum_t2[old_p] for old_p in survivors]
+        new_counts = zeros(Int, P_new)
+        new_sum_t = zeros(Float64, P_new)
+        new_sum_t2 = zeros(Float64, P_new)
+        for (new_p, old_p) in enumerate(survivors)
+            if old_p <= length(occ.counts)
+                new_counts[new_p] = occ.counts[old_p]
+                new_sum_t[new_p] = occ.sum_t[old_p]
+                new_sum_t2[new_p] = occ.sum_t2[old_p]
+            end
+        end
         occ.counts = new_counts
         occ.sum_t = new_sum_t
         occ.sum_t2 = new_sum_t2
     end
 
-    update_motif_bounds!(m)
+    update_motif_bounds!(m; bg_rates=bg_rates)
     return dead_packets
 end
 
 """
-    calc_marginal_log_evidence(
-        m::PurePacketMotif,
-        counts::Vector{Int},
-        members::Vector{Int},
-        tau::Float64,
-        u::Vector{Float64},
-        spike_t::Vector{Float64},
-        assign::Vector{SpikeAssignment},
-        bg_rates::Vector{Float64},
-        active_mask::BitVector;
-        alpha_c::Float64=10.0,
-        beta_c::Float64=10.0
-    )
+    detect_and_birth_or_split_packets!(m::PurePacketMotif, occurrences, spike_t, spike_chan, assign, bg_rates, N_channels; ...)
 
-Calculates the exact Marginal Negative Binomial log-evidence Delta ln M(e)
-integrating out occurrence gain c_e ~ Gamma(alpha_c, beta_c):
-    Delta ln M(e) = sum_{p} sum_{i in p} ln( (a_{m,p} * N_i) / lambda_0(k_p) )
-                  + ln(Gamma(alpha_c + N_e) / Gamma(alpha_c))
-                  - N_e * ln(beta_c + A_m)
-                  + alpha_c * ln(beta_c / (beta_c + A_m))
-where A_m = sum_p a_{m,p} and N_e = sum_p counts[p].
-"""
-
-# =====================================================================
-# 7. NONPARAMETRIC BIRTH & SPLIT: CONTINUOUS BAYES FACTOR
-# =====================================================================
-
-"""
-    detect_and_birth_or_split_packets!(
-        m::PurePacketMotif,
-        occurrences::Vector{PureOccurrence},
-        spike_t::Vector{Float64},
-        spike_chan::Vector{Int},
-        assign::Vector{SpikeAssignment},
-        bg_rates::Vector{Float64},
-        N_channels::Int;
-        sigma_prior::Float64=0.015,
-        alpha_a::Float64=1.0,
-        beta_a::Float64=1.0
-    )
-
-Continuous Bayes Factor birth & bimodal split operator:
-1. Gathers candidate spikes: background spikes inside occurrences + spikes on existing packets with |residual| > 1.5 sigma_p.
-2. Evaluates Delta LLR directly at candidate spike timestamps (0 grid binning).
-3. Refines with 1 local Newton-Raphson step.
-4. Accepts if max Delta LLR > continuous Occam volume penalty log(W / sqrt(2pi*sigma^2)).
+Decoupled RJMCMC packet operators:
+1. Bimodal Packet Split: operates strictly over member spikes S_p of existing packets.
+2. Background Packet Birth: operates strictly over unassigned background spikes within dynamic motif reach.
 """
 function detect_and_birth_or_split_packets!(
     m::PurePacketMotif,
@@ -355,7 +311,7 @@ function detect_and_birth_or_split_packets!(
     occ_dict = Dict(occ.id => occ for occ in occurrences)
     birthed_any = false
 
-    # Rule 2: Exact Marginal Occam Volume for adding R spatial deformation loadings W_{r,p}
+    # Rule 2: Marginal Occam volume for adding R spatial deformation loadings
     tax_loadings = 0.0
     if active_mask !== nothing && ard_alphas !== nothing
         for r in 1:length(active_mask)
@@ -366,9 +322,7 @@ function detect_and_birth_or_split_packets!(
         end
     end
 
-    # =============================================================
-    # 1. BIMODAL PACKET SPLIT OPERATOR (Evaluated on Assigned Spikes)
-    # =============================================================
+    # 1. Bimodal Packet Split (Evaluated on Assigned Spikes S_p)
     if allow_multi_packets && !isempty(m.packets)
         P_curr = length(m.packets)
         for p in 1:P_curr
@@ -378,7 +332,6 @@ function detect_and_birth_or_split_packets!(
             split_cand_times = Float64[]
             split_spk_indices = Int[]
 
-            # Gather spikes assigned to packet p with residual |dt| > 1.5 * sig_p
             for occ in occurrences
                 occ.counts[p] == 0 && continue
                 u = occ.u
@@ -409,7 +362,6 @@ function detect_and_birth_or_split_packets!(
                 cand_sorted = split_cand_times[sort_idx]
                 spk_sorted = split_spk_indices[sort_idx]
 
-                # Support of split proposal is strictly the empirical span of candidate split spikes
                 split_span = max(cand_sorted[end] - cand_sorted[1], 4.0 * sigma_prior)
                 occam_split = log(split_span / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings
 
@@ -424,7 +376,6 @@ function detect_and_birth_or_split_packets!(
                     t_cand = cand_sorted[i]
                     (t_cand - last_split_t < subsample_step) && continue
 
-                    # Rayleigh bimodality check against existing packet p
                     rayleigh_dist = max(tau_refractory, 2.0 * sqrt(var_prior + pkt.var))
                     if abs(t_cand - pkt.mu) < rayleigh_dist
                         continue
@@ -455,7 +406,6 @@ function detect_and_birth_or_split_packets!(
                 end
 
                 if best_split_llr > occam_split
-                    # Continuous Newton refinement
                     mu_refined = best_split_mu
                     g = 0.0; h = 0.0
                     for j in 1:N_split_cand
@@ -470,10 +420,8 @@ function detect_and_birth_or_split_packets!(
                         mu_refined += clamp(-g / h, -sigma_prior, sigma_prior)
                     end
 
-                    # Verify Rayleigh separation on refined center
                     rayleigh_dist = max(tau_refractory, 2.0 * sqrt(var_prior + pkt.var))
                     if abs(mu_refined - pkt.mu) >= rayleigh_dist
-                        # Birth split packet P_new
                         P_new = length(m.packets) + 1
                         init_mass = (alpha_a + Float64(N_split_cand)) / (beta_a + E_eff)
                         new_pkt = Packet(P_new, chan, mu_refined, var_prior, max(init_mass, 0.05))
@@ -491,7 +439,6 @@ function detect_and_birth_or_split_packets!(
                             push!(occ.sum_t2, 0.0)
                         end
 
-                        # Reassign split candidate spikes to new packet
                         for s_idx in split_spk_indices
                             old_p = assign[s_idx].packet_idx
                             eid = assign[s_idx].event_id
@@ -515,9 +462,7 @@ function detect_and_birth_or_split_packets!(
         end
     end
 
-    # =============================================================
-    # 2. BACKGROUND PACKET BIRTH OPERATOR (Evaluated on Unassigned Spikes)
-    # =============================================================
+    # 2. Background Packet Birth (Evaluated on Unassigned Spikes)
     delta_reach = max(3.0 * sigma_prior, 0.25)
     s_left = m.delta_left - delta_reach
     s_right = m.delta_right + delta_reach
@@ -542,7 +487,6 @@ function detect_and_birth_or_split_packets!(
         end
     end
 
-    # Evaluate candidate channels for background birth
     for chan in 1:N_channels
         if !allow_multi_packets && length(m.chan_to_packets[chan]) >= 1
             continue
@@ -620,8 +564,7 @@ function detect_and_birth_or_split_packets!(
             mu_refined = best_mu
             idx_left = searchsortedfirst(candidate_rel_times, mu_refined - delta)
             idx_right = searchsortedlast(candidate_rel_times, mu_refined + delta)
-            g = 0.0
-            h = 0.0
+            g = 0.0; h = 0.0
             @inbounds for j in idx_left:idx_right
                 dt = candidate_rel_times[j] - mu_refined
                 w = exp(-0.5 * (dt * dt) / var_prior)
@@ -645,7 +588,6 @@ function detect_and_birth_or_split_packets!(
             end
             unimodal_overlap && continue
 
-            # Birth Packet P_new from background
             P_new = length(m.packets) + 1
             init_mass = (alpha_a + 1.0) / (beta_a + E_m)
             new_pkt = Packet(P_new, chan, mu_refined, var_prior, max(init_mass, 0.05))
@@ -706,4 +648,3 @@ function detect_and_birth_or_split_packets!(
 
     return birthed_any
 end
-

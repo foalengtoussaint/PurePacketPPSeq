@@ -1,5 +1,210 @@
-# occurrence_birth_prune.jl - Step 0 Rao Score Occurrence Birth & Pruning
+# mechanisms/m2_carrier.jl - Level m=2 Sequence Carrier Composition & Dynamic Envelopes
+#
+# Generative Role:
+# - Composes individual emission packets (m=1) into ordered spatiotemporal sequence carriers.
+# - Evaluates continuous dynamic bounding envelopes [delta_left, delta_right] and physical span W_eff.
+# - Manages carrier occurrence life cycles: candidate birth via continuous Rao score fields,
+#   competitive overwrites, and Occam marginal log-evidence pruning.
 
+const SequenceCarrier = PurePacketMotif
+
+function PurePacketMotif(id::Int, packets::Vector{Packet}, R_max::Int, N_channels::Int; W_window::Float64=0.0)
+    P = length(packets)
+    W = zeros(Float64, R_max, P)
+    c2p = [Int[] for _ in 1:N_channels]
+    for (p, pkt) in enumerate(packets)
+        push!(c2p[pkt.channel], p)
+    end
+    chan_active = falses(N_channels)
+    chan_bounds = fill((0.0, 0.0), N_channels)
+    m = PurePacketMotif(id, packets, W, c2p, W_window, 0.0, 0.0, chan_active, chan_bounds)
+    update_motif_bounds!(m)
+    return m
+end
+
+"""
+    update_motif_bounds!(m::PurePacketMotif, lambda_min::Vector{Float64}=Float64[]; bg_rates=nothing, kappa=4.0, kappa_u=3.0)
+
+Dynamically computes:
+1. Channel-Local Bounding Envelopes: m.chan_bounds[k] = (delta_left_k, delta_right_k).
+2. Global Dynamic Bounding Envelope: [m.delta_left, m.delta_right].
+3. Active Channel BitVector: m.chan_active[k].
+4. Physical Occam Footprint: m.W_window = max(m.delta_right - m.delta_left, 0.0).
+"""
+function update_motif_bounds!(
+    m::PurePacketMotif,
+    lambda_min::Vector{Float64}=Float64[];
+    bg_rates::Union{Nothing, Vector{Float64}}=nothing,
+    kappa::Float64=4.0,
+    kappa_u::Float64=3.0
+)
+    N_chans = length(m.chan_to_packets)
+    if length(m.chan_active) != N_chans
+        m.chan_active = falses(N_chans)
+        m.chan_bounds = fill((0.0, 0.0), N_chans)
+    else
+        fill!(m.chan_active, false)
+    end
+
+    if isempty(m.packets)
+        m.delta_left = 0.0
+        m.delta_right = 0.0
+        m.W_window = 0.0
+        fill!(m.chan_bounds, (0.0, 0.0))
+        return m
+    end
+
+    R = size(m.W, 1)
+    global_left = Inf
+    global_right = -Inf
+
+    for k in 1:N_chans
+        pkts_k = m.chan_to_packets[k]
+        if isempty(pkts_k)
+            m.chan_bounds[k] = (0.0, 0.0)
+        else
+            m.chan_active[k] = true
+            c_left = Inf
+            c_right = -Inf
+            lam0 = (bg_rates !== nothing && k <= length(bg_rates)) ? max(bg_rates[k], 1e-12) : 0.5
+            for p in pkts_k
+                pkt = m.packets[p]
+                sig = sqrt(max(pkt.var, 1e-8))
+
+                if bg_rates !== nothing
+                    snr_p = pkt.mass / (sqrt(2π) * sig * lam0)
+                    R_p = (snr_p > 1.0) ? (sig * sqrt(2.0 * log(snr_p))) : 0.0
+                    R_eff = max(R_p, sig)
+                else
+                    R_eff = kappa * sig
+                end
+
+                var_def = 0.0
+                if R > 0 && !isempty(lambda_min)
+                    for r in 1:min(R, length(lambda_min))
+                        var_def += (m.W[r, p]^2) / max(lambda_min[r], 1e-6)
+                    end
+                end
+                delta_p = kappa_u * sqrt(var_def)
+                left_p = pkt.mu - R_eff - delta_p
+                right_p = pkt.mu + R_eff + delta_p
+                c_left = min(c_left, left_p)
+                c_right = max(c_right, right_p)
+            end
+            m.chan_bounds[k] = (c_left, c_right)
+            global_left = min(global_left, c_left)
+            global_right = max(global_right, c_right)
+        end
+    end
+
+    m.delta_left = global_left
+    m.delta_right = global_right
+    m.W_window = isfinite(global_right - global_left) ? max(global_right - global_left, 0.0) : 0.0
+    return m
+end
+
+const update_channel_bounds! = update_motif_bounds!
+
+function update_all_motif_bounds!(motifs::Dict{Int, PurePacketMotif}; bg_rates=nothing, kappa::Float64=4.0, kappa_u::Float64=3.0)
+    for m in values(motifs)
+        update_motif_bounds!(m; bg_rates=bg_rates, kappa=kappa, kappa_u=kappa_u)
+    end
+end
+
+function update_all_motif_bounds!(motifs::Dict{Int, PurePacketMotif}, legacy_arg; bg_rates=nothing, kappa::Float64=4.0, kappa_u::Float64=3.0)
+    update_all_motif_bounds!(motifs; bg_rates=bg_rates, kappa=kappa, kappa_u=kappa_u)
+end
+
+function rebuild_inverted_index!(m::PurePacketMotif, N_channels::Int)
+    if length(m.chan_to_packets) != N_channels
+        m.chan_to_packets = [Int[] for _ in 1:N_channels]
+    else
+        for c in 1:N_channels
+            empty!(m.chan_to_packets[c])
+        end
+    end
+    for (p, pkt) in enumerate(m.packets)
+        if pkt.channel >= 1 && pkt.channel <= N_channels
+            push!(m.chan_to_packets[pkt.channel], p)
+        end
+    end
+    update_motif_bounds!(m)
+end
+
+function update_chan_to_motifs(motifs::Dict{Int, PurePacketMotif}, N_channels::Int)::Vector{Vector{Int}}
+    chan_to_motifs = [Int[] for _ in 1:N_channels]
+    for (mid, m) in motifs
+        for c in 1:N_channels
+            if c <= length(m.chan_to_packets) && !isempty(m.chan_to_packets[c])
+                push!(chan_to_motifs[c], mid)
+            end
+        end
+    end
+    return chan_to_motifs
+end
+
+"""
+    resample_occurrence_onset!(occ, m, active_mask; T_max=Inf, rng=default_rng())
+
+Gibbs draw for occurrence onset tau_e ~ N(mu_tau, tot_prec^-1)
+strictly clamped to [max(0.0, -delta_left), T_max - delta_right].
+"""
+function resample_occurrence_onset!(
+    occ::PureOccurrence,
+    m::PurePacketMotif,
+    active_mask::BitVector;
+    T_max::Float64=Inf,
+    rng::AbstractRNG=Random.default_rng()
+)
+    P = length(m.packets)
+    P == 0 && return
+
+    k1 = 0; k2 = 0; k3 = 0; k4 = 0
+    K = 0
+    for r in 1:length(active_mask)
+        if active_mask[r]
+            K += 1
+            if K == 1; k1 = r
+            elseif K == 2; k2 = r
+            elseif K == 3; k3 = r
+            elseif K == 4; k4 = r
+            end
+        end
+    end
+
+    potential = 0.0
+    tot_prec = 0.0
+    u = occ.u
+
+    for p in 1:P
+        c = occ.counts[p]
+        c == 0 && continue
+        pkt = m.packets[p]
+        sig2 = pkt.var
+        v_inv = c / sig2
+        pred_s = 0.0
+        if K == 1; pred_s = m.W[k1, p] * u[k1]
+        elseif K == 2; pred_s = m.W[k1, p] * u[k1] + m.W[k2, p] * u[k2]
+        elseif K == 3; pred_s = m.W[k1, p] * u[k1] + m.W[k2, p] * u[k2] + m.W[k3, p] * u[k3]
+        elseif K == 4; pred_s = m.W[k1, p] * u[k1] + m.W[k2, p] * u[k2] + m.W[k3, p] * u[k3] + m.W[k4, p] * u[k4]
+        end
+        tot_prec += v_inv
+        potential += (v_inv / c) * (occ.sum_t[p] - c * (pkt.mu + pred_s))
+    end
+
+    if tot_prec > 0.0
+        mu_tau = potential / tot_prec
+        min_valid_tau = isfinite(T_max) ? max(0.0, -m.delta_left) : 0.0
+        max_valid_tau = isfinite(T_max) ? max(min_valid_tau, T_max - m.delta_right) : Inf
+        occ.tau = clamp(mu_tau + randn(rng) / sqrt(tot_prec), min_valid_tau, max_valid_tau)
+    end
+end
+
+"""
+    calc_marginal_log_evidence(m, counts, members, tau, u, spike_t, assign, bg_rates, active_mask; alpha_c=10.0, beta_c=10.0)
+
+Evaluates the exact Marginal Negative Binomial log-evidence Delta ln M(e) integrating out c_e ~ Gamma(alpha_c, beta_c).
+"""
 function calc_marginal_log_evidence(
     m::PurePacketMotif,
     counts::Vector{Int},
@@ -18,11 +223,9 @@ function calc_marginal_log_evidence(
     A_m = sum(p.mass for p in m.packets; init=0.0)
     N_e = sum(counts; init=0)
 
-    # Base prior deficit when N_e == 0: alpha_c * ln(beta_c / (beta_c + A_m))
     prior_deficit = alpha_c * log(beta_c / (beta_c + A_m))
     N_e == 0 && return prior_deficit
 
-    # Unpack active deformation coordinates
     k1 = 0; k2 = 0; k3 = 0; k4 = 0
     K = 0
     for r in 1:length(active_mask)
@@ -36,7 +239,6 @@ function calc_marginal_log_evidence(
         end
     end
 
-    # Kernel likelihood ratio sum: sum_{p} sum_{i in p} ln( (a_{m,p} * N_i) / lambda_0 )
     kernel_sum = 0.0
     for spk_idx in members
         p = assign[spk_idx].packet_idx
@@ -59,7 +261,6 @@ function calc_marginal_log_evidence(
         kernel_sum += log(max(ratio, 1e-12))
     end
 
-    # Negative Binomial count terms
     gamma_ratio = loggamma(alpha_c + Float64(N_e)) - loggamma(alpha_c)
     scale_term = - Float64(N_e) * log(beta_c + A_m)
 
@@ -67,23 +268,11 @@ function calc_marginal_log_evidence(
 end
 
 """
-    prune_dead_occurrences!(
-        occurrences::Dict{Int, PureOccurrence},
-        motifs::Dict{Int, PurePacketMotif},
-        spike_t::Vector{Float64},
-        assign::Vector{SpikeAssignment},
-        bg_rates::Vector{Float64},
-        T_max::Float64,
-        active_mask::BitVector;
-        alpha_c::Float64=10.0,
-        beta_c::Float64=10.0,
-        gamma_m::Float64=100.0
-    )
+    prune_dead_occurrences!(occurrences, motifs, spike_t, assign, bg_rates, T_max, active_mask; alpha_c=10.0, beta_c=10.0, gamma_m=100.0)
 
 Prunes occurrences that fail the exact Marginal Negative Binomial Bayes Factor test:
     Delta ln M(e) <= Tax_Occam
-where Tax_Occam = ln((T - W) / W) + ln((E_m + 1) / gamma_m).
-Releases member spikes to background (assign[i] = SpikeAssignment(0, 0)) and deletes the occurrence.
+Releases member spikes back to background.
 """
 function prune_dead_occurrences!(
     occurrences::Dict{Int, PureOccurrence},
@@ -120,20 +309,17 @@ function prune_dead_occurrences!(
             continue
         end
 
-        # Exact marginal Negative Binomial log-evidence
         delta_ln_M = calc_marginal_log_evidence(
             m, occ.counts, occ.members, occ.tau, occ.u,
             spike_t, assign, bg_rates, active_mask;
             alpha_c=alpha_c, beta_c=beta_c
         )
 
-        # Death condition: exactly symmetric with birth condition
         if delta_ln_M <= tax_occam
             push!(pruned_eids, eid)
         end
     end
 
-    # Release spikes of dead occurrences back to background
     for eid in pruned_eids
         occ = occurrences[eid]
         for spk_idx in occ.members
@@ -172,29 +358,10 @@ function prune_dead_occurrences!(
     return pruned_eids
 end
 
-
-# =====================================================================
-# 8. NONPARAMETRIC OCCURRENCE BIRTH & COMPETITIVE OVERWRITE
-# =====================================================================
-
 """
-Continuous Data-Driven Reversible Jump MCMC Occurrence Birth Sampler:
-Derived from the continuous log-evidence functional (Rao score field) of the marked point process:
-  S_m(tau) = sum_{p in P_m} sum_{i in D_bg(k_p)} w_{i,p} N(tau | t_i - mu_p, sigma_p^2) - Tax_Occam
-where w_{i,p} = a_{m,p} / lambda_{0, k_p}.
+    detect_and_birth_occurrences!(occurrences, motifs, spike_t, spike_chan, chan_to_spikes, assign, bg_rates, T_max, R_max; ...)
 
-1. Normalized component weights:
-   W_{m,p} = (a_{m,p} / lambda_{0, k_p}) * N_bg(k_p),  W_m = sum_p W_{m,p}
-2. O(1) Candidate Onset Proposal:
-   Draw packet p* ~ Categorical(W_{m,:}), background spike i* ~ Uniform(D_bg(k_{p*})),
-   continuous candidate onset seed tau_seed ~ N(t_{i*} - mu_{p*}, sigma_{p*}^2).
-   Local Newton mode centering: tau* = tau_seed - score / hessian.
-3. Exact Denominator Evaluation q(tau* | D_bg):
-   Evaluated via local binary search over sorted background spikes on motif channels within 4.0 * sigma.
-4. Metropolis-Hastings Detailed Balance Acceptance:
-   ln R = Delta ln M*(tau*) - Tax_Occam - ln(W_window * q(tau* | D_bg))
-   Accept if log(rand(rng)) < min(0.0, ln_R).
-5. Competitive Overwrite & Refractory Exclusion.
+Data-driven reversible jump MCMC birth of sequence occurrences derived from the continuous Rao score field S_m(tau).
 """
 function detect_and_birth_occurrences!(
     occurrences::Dict{Int, PureOccurrence},
@@ -227,7 +394,6 @@ function detect_and_birth_occurrences!(
 
     N_channels = length(chan_to_spikes)
 
-    # Pre-gather background spikes per channel
     times_bg = bg_times !== nothing ? bg_times : [Float64[] for _ in 1:N_channels]
     indices_bg = bg_indices !== nothing ? bg_indices : [Int[] for _ in 1:N_channels]
 
@@ -245,7 +411,6 @@ function detect_and_birth_occurrences!(
         end
     end
 
-    # Preallocate candidate scratch buffers
     cand_spk_indices = Int[]
     cand_pkt_indices = Int[]
     cand_lr = Float64[]
@@ -261,12 +426,10 @@ function detect_and_birth_occurrences!(
         E_m = count(occ -> occ.motif == mid, values(occurrences))
         sig_min = minimum(sqrt(p.var) for p in m.packets)
 
-        # Prior Deficit and Occam Volume Tax evaluated with dynamic physical span W_eff
         prior_deficit = alpha_c * log(beta_c / (beta_c + total_mass))
         tax_occam = log(max((T_max - W_eff) / W_eff, 1.0)) + log(max((E_m + 1.0) / gamma_m, 1e-3))
         N_min = max(ceil(Int, (abs(prior_deficit) + tax_occam) / 3.5), 2)
 
-        # 1. Component Weights for Continuous Mixture Proposal
         W_mp = zeros(Float64, P)
         sum_snr = 0.0
         for p in 1:P
@@ -282,7 +445,6 @@ function detect_and_birth_occurrences!(
 
         cum_W = cumsum(W_mp)
 
-        # Dynamic Physical Stopping Bound L_m* based on single-occurrence sensitivity (alpha = 0.025 for >=95% confidence)
         p_hit_1 = sum_snr / W_m
         L_m_star = max(ceil(Int, log(1.0 / alpha_stopping) / p_hit_1), 100)
         refract_dist = refractory_fraction * W_eff
@@ -292,7 +454,6 @@ function detect_and_birth_occurrences!(
         c_reject = 0
 
         while c_reject < L_m_star
-            # 2. O(1) Candidate Onset Proposal
             u_draw = rand(rng) * W_m
             p_star = searchsortedfirst(cum_W, u_draw)
             p_star = clamp(p_star, 1, P)
@@ -314,7 +475,6 @@ function detect_and_birth_occurrences!(
                 continue
             end
 
-            # Local Newton mode centering step
             score = 0.0
             hessian = 0.0
             for p in 1:P
@@ -348,7 +508,6 @@ function detect_and_birth_occurrences!(
                 tau_star = clamp(tau_seed + delta_tau, tau_min, tau_max)
             end
 
-            # Intra-sweep exclusion check
             is_excluded = false
             for (ex_m, ex_tau) in intra_sweep_exclusion
                 if ex_m == mid && abs(tau_star - ex_tau) < refract_dist
@@ -361,7 +520,6 @@ function detect_and_birth_occurrences!(
                 continue
             end
 
-            # 3. Denominator Evaluation q(tau* | D_bg) & Candidate Spikes
             q_sum = 0.0
             empty!(cand_spk_indices)
             empty!(cand_pkt_indices)
@@ -420,7 +578,6 @@ function detect_and_birth_occurrences!(
                 continue
             end
 
-            # 4. Latent deformation solve u* = A^{-1} b
             u_star_vec = zeros(Float64, R_max)
             k1 = 0; k2 = 0; k3 = 0; k4 = 0
             K = 0
@@ -462,7 +619,6 @@ function detect_and_birth_occurrences!(
                 b_sub = SVector{K, Float64}(view(b_vec, 1:K))
                 u_sub = inv(A_sub) * b_sub
 
-                # Recompute kernel sum with u*
                 kernel_sum_warped = 0.0
                 for k_idx in 1:N_cand
                     s = cand_spk_indices[k_idx]
@@ -491,7 +647,6 @@ function detect_and_birth_occurrences!(
                 end
             end
 
-            # 5. Marginal Negative Binomial evidence & Hastings acceptance
             gamma_ratio = loggamma(alpha_c + Float64(N_cand)) - loggamma(alpha_c)
             scale_term = - Float64(N_cand) * log(beta_c + total_mass)
             delta_ln_M_star = kernel_sum + gamma_ratio + scale_term + prior_deficit
@@ -499,7 +654,6 @@ function detect_and_birth_occurrences!(
             q_tau = max(q_sum / W_m, 1e-15)
             ln_R = delta_ln_M_star - tax_occam - log(W_eff * q_tau)
 
-            # 6. Competitive Overwrite or Fresh Birth
             incumbent_eid = 0
             min_dist = Inf
             for (eid, occ) in occurrences
@@ -535,10 +689,8 @@ function detect_and_birth_occurrences!(
                     E_m += 1
                     tax_occam = log(max((T_max - W_eff) / W_eff, 1.0)) + log(max((E_m + 1.0) / gamma_m, 1e-3))
 
-                    # ACCEPTED: Reset rejection counter
                     c_reject = 0
 
-                    # Sequential depletion: excise claimed spikes from background pool
                     for k_idx in 1:N_cand
                         j_spk = cand_spk_indices[k_idx]
                         c_ch = spike_chan[j_spk]
@@ -548,7 +700,6 @@ function detect_and_birth_occurrences!(
                             deleteat!(indices_bg[c_ch], pos)
                         end
                     end
-                    # In-place update of W_mp and cum_W
                     for p in 1:P
                         pkt = m.packets[p]
                         k = pkt.channel
@@ -594,10 +745,8 @@ function detect_and_birth_occurrences!(
                     push!(intra_sweep_exclusion, (mid, tau_star))
                     n_overwritten += 1
 
-                    # ACCEPTED: Reset rejection counter
                     c_reject = 0
 
-                    # Sequential depletion: excise newly claimed spikes
                     for k_idx in 1:N_cand
                         j_spk = cand_spk_indices[k_idx]
                         c_ch = spike_chan[j_spk]
@@ -627,7 +776,53 @@ function detect_and_birth_occurrences!(
     return (n_birthed, n_overwritten)
 end
 
-# =====================================================================
-# 8. GLOBAL ARD PRECISIONS, PRUNING & DYNAMIC BIRTH (Level m=4)
-# =====================================================================
+# Checkpoint backward compatibility deserializer
+const MOTIF_FLOAT64_TAG = Int32(0x0e)
 
+function Serialization.deserialize(s::Serialization.AbstractSerializer, t::Type{PurePacketMotif})
+    x = ccall(:jl_new_struct_uninit, Any, (Any,), t)
+    Serialization.deserialize_cycle(s, x)
+    for i in 1:5
+        tag = Int32(read(s.io, UInt8)::UInt8)
+        if tag != Serialization.UNDEFREF_TAG
+            ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), x, i-1, Serialization.handle_deserialize(s, tag))
+        end
+    end
+    N_chans = length(x.chan_to_packets)
+    x.chan_active = falses(N_chans)
+    x.chan_bounds = fill((0.0, 0.0), N_chans)
+    x.delta_left = 0.0
+    x.delta_right = 0.0
+
+    mark(s.io)
+    if !eof(s.io)
+        tag6 = Int32(read(s.io, UInt8)::UInt8)
+        if tag6 == MOTIF_FLOAT64_TAG
+            x.delta_left = Serialization.handle_deserialize(s, tag6)
+            tag7 = Int32(read(s.io, UInt8)::UInt8)
+            x.delta_right = Serialization.handle_deserialize(s, tag7)
+            
+            mark(s.io)
+            if !eof(s.io)
+                tag8 = Int32(read(s.io, UInt8)::UInt8)
+                val8 = Serialization.handle_deserialize(s, tag8)
+                if val8 isa BitVector && length(val8) == N_chans
+                    x.chan_active = val8
+                    tag9 = Int32(read(s.io, UInt8)::UInt8)
+                    x.chan_bounds = Serialization.handle_deserialize(s, tag9)
+                    unmark(s.io)
+                    unmark(s.io)
+                    return x
+                else
+                    reset(s.io)
+                end
+            end
+            unmark(s.io)
+            update_motif_bounds!(x)
+            return x
+        end
+    end
+    reset(s.io)
+    update_motif_bounds!(x)
+    return x
+end

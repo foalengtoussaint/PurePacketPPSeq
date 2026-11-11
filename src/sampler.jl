@@ -1,8 +1,9 @@
-# gibbs_resample.jl - Dual-Index Spike Resampling
-
-# =====================================================================
-# 6. DUAL-INDEX SPIKE GIBBS RESAMPLER
-# =====================================================================
+# sampler.jl - Dual-Index Point-Process Gibbs Samplers
+#
+# Generative Role:
+# - Dispatches spike assignment z_i = (event_id, packet_idx) vs background (0, 0)
+#   by computing the relative likelihoods across active m-mechanisms.
+# - High-performance lock-free multithreaded sweeps with zero allocations.
 
 """
     resample_spike_pure_packet!(
@@ -18,7 +19,9 @@
         eval_occ_ids::Vector{Int},
         eval_packet_ids::Vector{Int},
         eval_logw::Vector{Float64};
-        rng::AbstractRNG=Random.default_rng()
+        ou_ctx::Union{Nothing, ContinuousOUContext}=nothing,
+        rng::AbstractRNG=Random.default_rng(),
+        update_moments::Bool=true
     )
 
 Channel-first routed dual-index spike assignment Gibbs resampler z_i = (event_id, packet_idx) vs (0, 0).
@@ -161,7 +164,6 @@ function resample_spike_pure_packet!(
     end
 end
 
-
 """
     resample_all_spikes_pure_packet_threaded!(
         assign::Vector{SpikeAssignment},
@@ -177,7 +179,8 @@ end
         tl_occ::Vector{Vector{Int}},
         tl_pkt::Vector{Vector{Int}},
         tl_logw::Vector{Vector{Float64}},
-        tl_rng::Vector{<:AbstractRNG}
+        tl_rng::Vector{<:AbstractRNG};
+        ou_ctx::Union{Nothing, ContinuousOUContext}=nothing
     )
 
 High-performance, embarrassingly parallel spike assignment pass across all available CPU threads.
@@ -367,62 +370,3 @@ function resample_spike_pure_packet!(
         new_occ.sum_t2[new_pid] += t_i * t_i
     end
 end
-
-
-
-function resample_background_pure_packet!(
-    bg_rates::Vector{Float64},
-    pi_bg::Vector{Float64},
-    gamma_buf::Vector{Float64},
-    counts_bg::Vector{Int},
-    assign::AbstractVector{SpikeAssignment},
-    neuron::AbstractVector{Int},
-    channel_group::AbstractVector{Int},
-    groups::AbstractVector,
-    bg_a::AbstractVector{Float64},
-    bg_b::AbstractVector{Float64},
-    beta_bg::AbstractVector{Float64},
-    T_total::Float64,
-    exposure::AbstractVector{Float64};
-    rng::AbstractRNG=Random.default_rng()
-)
-    fill!(counts_bg, 0)
-    @inbounds for i in eachindex(assign)
-        if assign[i].event_id == 0
-            counts_bg[neuron[i]] += 1
-        end
-    end
-
-    for (g, grp) in enumerate(groups)
-        exp_g = exposure[g]
-        exp_g <= 0.0 && continue
-        b_bg = beta_bg[g]
-        tot_grp_counts = 0
-        sum_gamma = 0.0
-
-        @inbounds for k in grp
-            c_k = counts_bg[k]
-            tot_grp_counts += c_k
-            # In-place Gamma draw for Dirichlet marginal: g_k ~ Gamma(beta_bg[g] + c_k, 1.0)
-            g_k = rand(rng, Gamma(b_bg + c_k, 1.0))
-            gamma_buf[k] = g_k
-            sum_gamma += g_k
-        end
-
-        inv_sum_gamma = sum_gamma > 0.0 ? (1.0 / sum_gamma) : 0.0
-        @inbounds for k in grp
-            pi_bg[k] = gamma_buf[k] * inv_sum_gamma
-        end
-
-        # Conjugate Gamma draw for group background rate
-        shape_g = bg_a[g] + tot_grp_counts
-        rate_g = bg_b[g] + T_total * exp_g
-        lambda_g = rand(rng, Gamma(shape_g, 1.0 / max(rate_g, 1e-12)))
-
-        @inbounds for k in grp
-            bg_rates[k] = lambda_g * pi_bg[k]
-        end
-    end
-end
-
-
