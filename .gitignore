@@ -1,0 +1,9 @@
+# Binary checkpoints & data files
+*.jls
+*.npz
+*.bin
+*.npy
+*.log
+*.pyc
+__pycache__/
+modularize.py
