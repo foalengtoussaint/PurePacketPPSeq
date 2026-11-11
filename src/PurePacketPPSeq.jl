@@ -19,6 +19,7 @@ include("mechanisms/m5_ou.jl")
 include("scales.jl")
 include("sampler.jl")
 include("metrics.jl")
+include("inference.jl")
 
 export
     # Point-Process Hierarchy & Events
@@ -120,11 +121,21 @@ export
     sample_continuous_occurrence_amplitudes!,
     sample_student_t_precisions!,
 
-    # Objective Standard Metrics
+    # Objective Standard Metrics & Diagnostics
     standard_normal_cdf,
     select_stratified_audit_channels,
     compute_time_rescaling_ks,
     compute_rank_normalized_rhat_ess,
-    compute_joint_energy
+    compute_joint_energy,
+    SweepDiagnostics,
+    compute_max_gauge_error,
+    compute_sweep_diagnostics,
+    print_diagnostics_header,
+    print_diagnostics_row,
+
+    # MCMC Sweep Engine
+    allocate_thread_buffers,
+    allocate_birth_buffers,
+    step_pure_packet_sweep!
 
 end # module PurePacketPPSeq

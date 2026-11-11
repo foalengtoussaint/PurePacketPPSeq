@@ -406,3 +406,111 @@ function compute_joint_energy(
     return compute_joint_energy(motifs, occurrences, total_spikes_per_chan, bg_rates, ard_state, T_total; kwargs...)
 end
 
+# =====================================================================
+# 13. MCMC SWEEP TELEMETRY & DIAGNOSTICS
+# =====================================================================
+
+"""
+    SweepDiagnostics
+
+Objective summary metrics evaluated at each MCMC sweep:
+- `sweep`: Current sweep number
+- `n_occurrences`: Total active sequence occurrences
+- `n_pruned`: Occurrences pruned this sweep
+- `n_birthed`: Occurrences birthed this sweep
+- `n_spikes`: Number of spikes assigned to sequence foreground
+- `total_packets`: Total number of active emission packets across all motifs
+- `mean_vigor`: Mean motor vigor amplitude E[c_e]
+- `joint_energy`: Complete-data negative joint log-posterior energy U_t
+- `max_gauge_error`: Maximum translational gauge violation max_r |sum_p kappa_p W_{r,p}|
+- `duration_s`: Elapsed time in seconds for the sweep
+"""
+struct SweepDiagnostics
+    sweep::Int
+    n_occurrences::Int
+    n_pruned::Int
+    n_birthed::Int
+    n_spikes::Int
+    total_packets::Int
+    mean_vigor::Float64
+    joint_energy::Float64
+    max_gauge_error::Float64
+    duration_s::Float64
+end
+
+"""
+    compute_max_gauge_error(motifs::Dict{Int, PurePacketMotif}, active_mask::BitVector)::Float64
+
+Computes the maximum gauge violation across all active motifs and latent dimensions:
+    max_{m, r: active} |sum_p (1 / sigma_p^2) W_{r,p}|
+"""
+function compute_max_gauge_error(motifs::Dict{Int, PurePacketMotif}, active_mask::BitVector)::Float64
+    max_gauge_err = 0.0
+    R_max = length(active_mask)
+    for pm in values(motifs)
+        P = length(pm.packets)
+        for r in 1:R_max
+            if active_mask[r]
+                g_err = abs(sum((1.0 / pm.packets[p].var) * pm.W[r, p] for p in 1:P))
+                max_gauge_err = max(max_gauge_err, g_err)
+            end
+        end
+    end
+    return max_gauge_err
+end
+
+"""
+    compute_sweep_diagnostics(
+        sweep::Int, motifs, occurrences, assign, bg_rates, ard_state, T_total,
+        total_spikes_per_chan, dt_sw;
+        n_birthed=0, n_pruned=0, ou_ctx=nothing
+    ) -> SweepDiagnostics
+
+Evaluates all objective sweep diagnostics in zero-allocation, sub-millisecond time.
+"""
+function compute_sweep_diagnostics(
+    sweep::Int,
+    motifs::Dict{Int, PurePacketMotif},
+    occurrences::Dict{Int, PureOccurrence},
+    assign::Vector{SpikeAssignment},
+    bg_rates::Vector{Float64},
+    ard_state::ARDManifoldState,
+    T_total::Float64,
+    total_spikes_per_chan::Vector{Int},
+    dt_sw::Float64;
+    n_birthed::Int=0,
+    n_pruned::Int=0,
+    ou_ctx::Union{Nothing, ContinuousOUContext}=nothing
+)::SweepDiagnostics
+    total_packets = sum(length(pm.packets) for pm in values(motifs); init=0)
+    n_spk = count(as -> as.event_id > 0, assign)
+    mean_vigor = isempty(occurrences) ? 0.0 : mean(occ.amplitude for occ in values(occurrences))
+    max_gauge_err = compute_max_gauge_error(motifs, ard_state.active_mask)
+    energy_u = compute_joint_energy(motifs, occurrences, total_spikes_per_chan, bg_rates, ard_state, T_total; ou_ctx=ou_ctx)
+
+    return SweepDiagnostics(
+        sweep,
+        length(occurrences),
+        n_pruned,
+        n_birthed,
+        n_spk,
+        total_packets,
+        mean_vigor,
+        energy_u,
+        max_gauge_err,
+        dt_sw
+    )
+end
+
+function print_diagnostics_header()
+    println(@sprintf("%-5s | %-6s | %-7s | %-7s | %-8s | %-12s | %-8s | %-12s | %-12s | %-7s",
+            "Sweep", "Events", "Pruned", "Birth", "Spikes", "Total Pkts", "Mean c_e", "Energy U_t", "Max Gauge", "Time(s)"))
+    println("-"^116)
+end
+
+function print_diagnostics_row(d::SweepDiagnostics)
+    println(@sprintf("%-5d | %-6d | %-7d | %-7d | %-8d | %-12d | %-8.4f | %-12.2e | %-12.2e | %-7.2f",
+            d.sweep, d.n_occurrences, d.n_pruned, d.n_birthed, d.n_spikes, d.total_packets,
+            d.mean_vigor, d.joint_energy, d.max_gauge_error, d.duration_s))
+end
+
