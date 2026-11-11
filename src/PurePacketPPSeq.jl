@@ -34,6 +34,7 @@ export
     load_awake_spikes,
     load_full_session_spikes,
     load_seed_motifs,
+    load_seed_bg_rates,
     load_checkpoint_motifs,
 
     # Universal m-Mechanisms

@@ -6,12 +6,13 @@
 include("/home/foaleng/Downloads/mop_awake_ppseq/custom_sampler/regime_triad_sampler/run_regime_sampler.jl")
 using PurePacketPPSeq
 
-# 1. Load domain-hygienic data and initial seed motifs
+# 1. Load domain-hygienic data, initial seed motifs and baseline rates
 data = load_awake_spikes()
 motifs = load_seed_motifs()
+bg_rates = load_seed_bg_rates()
 
 # 2. Initialize cold-scratch model (0 active occurrences)
-model = initialize_scratch_model(data, motifs; R_max=4)
+model = initialize_scratch_model(data, motifs; bg_rates=bg_rates, R_max=4)
 
 # 3. Fit MCMC with automated diagnostics, KS monitoring & checkpoints
 N_sweeps = length(ARGS) >= 1 ? parse(Int, ARGS[1]) : 50

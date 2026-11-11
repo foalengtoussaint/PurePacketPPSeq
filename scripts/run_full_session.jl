@@ -18,8 +18,8 @@ ck_path = isfile(joinpath(@__DIR__, "..", "checkpoints", "checkpoint_pure_packet
 
 loaded = load_checkpoint_motifs(ck_path; N_channels=411)
 
-# 2. Initialize model across full session
-model = initialize_scratch_model(data, loaded.motifs; R_max=loaded.ard_state.R_max)
+# 2. Initialize model across full session using learned Phase 1 background rates
+model = initialize_scratch_model(data, loaded.motifs; bg_rates=loaded.bg_rates, R_max=loaded.ard_state.R_max)
 
 # 3. Fit MCMC across full session
 N_sweeps = length(ARGS) >= 1 ? parse(Int, ARGS[1]) : 200

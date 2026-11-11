@@ -134,9 +134,23 @@ function load_seed_motifs(; ck_path::Union{Nothing, String}=nothing, N_channels:
 end
 
 """
-    load_checkpoint_motifs(ck_path::String; N_channels::Int=411) -> (motifs, ard_state)
+    load_seed_bg_rates(; ck_path=nothing, N_channels::Int=411) -> Vector{Float64}
 
-Loads motifs and ARD state directly from a native PurePacketPPSeq .jls checkpoint.
+Extracts initial baseline background Poisson rates lambda_{0, c} from seed baseline checkpoint.
+"""
+function load_seed_bg_rates(; ck_path::Union{Nothing, String}=nothing, N_channels::Int=411)::Vector{Float64}
+    default_ck = "/home/foaleng/Downloads/mop_awake_ppseq/custom_sampler/results/top4_task_20261008/mh_screening_experiment/regime_triad_reproduction_100s/checkpoint.jls"
+    target_path = ck_path !== nothing ? ck_path : default_ck
+
+    ck = open(deserialize, target_path)
+    b = ck.state.base
+    return [Float64(b.bg_rate[b.channel_group[k]] * b.bg_pi[k]) for k in 1:N_channels]
+end
+
+"""
+    load_checkpoint_motifs(ck_path::String; N_channels::Int=411) -> (motifs, ard_state, bg_rates)
+
+Loads motifs, ARD state, and fitted background rates directly from a native PurePacketPPSeq .jls checkpoint.
 """
 function load_checkpoint_motifs(ck_path::String; N_channels::Int=411)
     if !isfile(ck_path)
@@ -145,10 +159,11 @@ function load_checkpoint_motifs(ck_path::String; N_channels::Int=411)
     ck_data = open(deserialize, ck_path)
     motifs = ck_data.motifs
     ard_state = ck_data.ard_state
+    bg_rates = hasproperty(ck_data, :bg_rates) ? ck_data.bg_rates : (haskey(ck_data, :bg_rates) ? ck_data[:bg_rates] : nothing)
 
     for pm in values(motifs)
         filter!(p -> p.channel <= N_channels, pm.packets)
         rebuild_inverted_index!(pm, N_channels)
     end
-    return (motifs = motifs, ard_state = ard_state)
+    return (motifs = motifs, ard_state = ard_state, bg_rates = bg_rates)
 end

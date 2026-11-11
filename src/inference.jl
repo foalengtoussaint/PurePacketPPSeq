@@ -49,16 +49,20 @@ end
     initialize_scratch_model(
         data::SpikeDataset,
         motifs::Dict{Int, PurePacketMotif};
+        bg_rates::Union{Nothing, Vector{Float64}}=nothing,
         R_max::Int=4,
         alpha_c::Float64=10.0,
         nu_student::Float64=4.0
     ) -> PurePacketModel
 
 Initializes a cold-scratch model instance (0 active occurrences, all spikes in background).
+If `bg_rates` is provided, it sets the initial Poisson rate floor; otherwise, an empirical
+floor (60% of raw channel rate) is used to prevent Bayes factor birth suppression.
 """
 function initialize_scratch_model(
     data::SpikeDataset,
     motifs::Dict{Int, PurePacketMotif};
+    bg_rates::Union{Nothing, Vector{Float64}}=nothing,
     R_max::Int=4,
     alpha_c::Float64=10.0,
     nu_student::Float64=4.0
@@ -72,10 +76,17 @@ function initialize_scratch_model(
     assign = [SpikeAssignment(0, 0) for _ in 1:N_spikes]
     counts_bg = zeros(Int, N_channels)
 
-    # Initialize empirical baseline rates
-    bg_rates = zeros(Float64, N_channels)
-    for c in 1:N_channels
-        bg_rates[c] = max(0.001, Float64(data.total_spikes_per_chan[c]) / max(T_total, 1.0))
+    # Initialize baseline background rates lambda_{0, c}
+    init_bg = zeros(Float64, N_channels)
+    if bg_rates !== nothing
+        @assert length(bg_rates) == N_channels "Dimension mismatch: provided bg_rates has length $(length(bg_rates)), expected $N_channels"
+        init_bg .= max.(0.0001, bg_rates)
+    else
+        # When no seed is available, use empirical background floor (60% of raw rate)
+        # to prevent Bayes Factor occurrence birth suppression
+        for c in 1:N_channels
+            init_bg[c] = max(0.001, 0.60 * Float64(data.total_spikes_per_chan[c]) / max(T_total, 1.0))
+        end
     end
 
     # Setup ARD Manifold (alpha_prune = 6,500 s^-2) & Continuous OU Triad
@@ -92,11 +103,12 @@ function initialize_scratch_model(
     )
 
     # Stratified Audit Channels for Brown et al. (2002) Time-Rescaling Theorem
-    audit = select_stratified_audit_channels(motifs, bg_rates, N_channels; n_signal=10, n_quiet=10)
+    audit = select_stratified_audit_channels(motifs, init_bg, N_channels; n_signal=10, n_quiet=10)
 
-    println(@sprintf("Cold Scratch Model Initialized: %d Motifs, 0 Occurrences, %d Background Spikes.", length(motifs), N_spikes))
+    println(@sprintf("Cold Scratch Model Initialized: %d Motifs, 0 Occurrences, %d Background Spikes (mean bg_rate = %.4f Hz).",
+            length(motifs), N_spikes, mean(init_bg)))
     return PurePacketModel(
-        motifs, occurrences, assign, bg_rates, counts_bg,
+        motifs, occurrences, assign, init_bg, counts_bg,
         ard_state, hyperstate, ou_ctx, audit,
         R_max, N_channels, T_total,
         Float64[], Any[]
@@ -369,6 +381,49 @@ function persist_checkpoint!(path::String, model::PurePacketModel)
             ks_history = model.ks_history
         ))
     end
+end
+
+"""
+    step_pure_packet_sweep!(
+        model::PurePacketModel,
+        data::SpikeDataset,
+        sweep::Int;
+        thread_bufs=nothing,
+        birth_bufs=nothing,
+        gamma_m::Float64=100.0,
+        alpha_c::Float64=10.0,
+        beta_c::Float64=10.0,
+        delta_margin::Float64=3.0,
+        rng::AbstractRNG=Random.default_rng()
+    ) -> (n_birthed::Int, n_overwritten::Int, n_pruned::Int)
+
+Convenience dispatch taking `PurePacketModel` and `SpikeDataset`.
+"""
+function step_pure_packet_sweep!(
+    model::PurePacketModel,
+    data::SpikeDataset,
+    sweep::Int;
+    thread_bufs=nothing,
+    birth_bufs=nothing,
+    gamma_m::Float64=100.0,
+    alpha_c::Float64=10.0,
+    beta_c::Float64=10.0,
+    delta_margin::Float64=3.0,
+    rng::AbstractRNG=Random.default_rng()
+)
+    t_bufs = thread_bufs !== nothing ? thread_bufs : allocate_thread_buffers(Threads.maxthreadid(); rng=rng)
+    b_bufs = birth_bufs !== nothing ? birth_bufs : allocate_birth_buffers(data.chan_to_spikes)
+
+    return step_pure_packet_sweep!(
+        sweep, model.motifs, model.occurrences, model.assign,
+        data.t, data.neuron, data.chan_to_spikes,
+        model.bg_rates, model.counts_bg, model.ard_state, model.ou_ctx,
+        data.T_total, model.R_max,
+        t_bufs.tl_occ, t_bufs.tl_pkt, t_bufs.tl_logw, t_bufs.tl_rng;
+        bg_times=b_bufs.bg_times, bg_indices=b_bufs.bg_indices,
+        gamma_m=gamma_m, alpha_c=alpha_c, beta_c=beta_c, delta_margin=delta_margin,
+        rng=rng
+    )
 end
 
 """
