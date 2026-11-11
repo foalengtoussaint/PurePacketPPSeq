@@ -46,6 +46,56 @@ mutable struct PurePacketModel
 end
 
 """
+    estimate_isi_tail_baseline(
+        data::SpikeDataset;
+        sigma_prior::Float64=0.015,
+        alpha_bg::Float64=1.0,
+        beta_bg::Float64=1.0
+    ) -> Vector{Float64}
+
+Memoryless ISI Tail Estimator (Exact Renewal Floor):
+Conditioning on inter-spike intervals exceeding the packet kernel span (Delta t > 4 * sigma_prior)
+strips out intra-packet bursts while leaving excess intervals strictly exponential with the true
+background rate. Yields parameter-free, closed-form MLE without checkpoint leakage:
+    hat{lambda}_{0,c} = |{k: Delta t_k > 4 * sigma_prior}| / sum_{k: Delta t_k > 4 * sigma_prior} (Delta t_k - 4 * sigma_prior)
+"""
+function estimate_isi_tail_baseline(
+    data::SpikeDataset;
+    sigma_prior::Float64=0.015,
+    alpha_bg::Float64=1.0,
+    beta_bg::Float64=1.0
+)::Vector{Float64}
+    N_channels = data.N_channels
+    tau_burst = 4.0 * sigma_prior
+    lambda_init = zeros(Float64, N_channels)
+
+    for c in 1:N_channels
+        spk_idx = data.chan_to_spikes[c]
+        if length(spk_idx) < 2
+            lambda_init[c] = max(0.001, Float64(length(spk_idx)) / max(data.T_total, 1.0))
+            continue
+        end
+        t_c = data.t[spk_idx]
+        excess_count = 0
+        excess_sum = 0.0
+        for i in 1:(length(t_c) - 1)
+            dt = t_c[i + 1] - t_c[i]
+            if dt > tau_burst
+                excess_count += 1
+                excess_sum += (dt - tau_burst)
+            end
+        end
+        if excess_count > 0 && excess_sum > 0.0
+            lambda_init[c] = max(0.0001, excess_count / excess_sum)
+        else
+            # Implementation guard: fast-spiking unit with zero excess intervals
+            lambda_init[c] = alpha_bg / beta_bg
+        end
+    end
+    return lambda_init
+end
+
+"""
     initialize_scratch_model(
         data::SpikeDataset,
         motifs::Dict{Int, PurePacketMotif};
@@ -56,8 +106,8 @@ end
     ) -> PurePacketModel
 
 Initializes a cold-scratch model instance (0 active occurrences, all spikes in background).
-If `bg_rates` is provided, it sets the initial Poisson rate floor; otherwise, an empirical
-floor (60% of raw channel rate) is used to prevent Bayes factor birth suppression.
+If `bg_rates` is provided, it sets the initial Poisson rate floor; otherwise, the closed-form
+Memoryless ISI Tail Estimator is used to break the E=0 absorbing boundary adaptively per unit.
 """
 function initialize_scratch_model(
     data::SpikeDataset,
@@ -82,11 +132,8 @@ function initialize_scratch_model(
         @assert length(bg_rates) == N_channels "Dimension mismatch: provided bg_rates has length $(length(bg_rates)), expected $N_channels"
         init_bg .= max.(0.0001, bg_rates)
     else
-        # When no seed is available, use empirical background floor (60% of raw rate)
-        # to prevent Bayes Factor occurrence birth suppression
-        for c in 1:N_channels
-            init_bg[c] = max(0.001, 0.60 * Float64(data.total_spikes_per_chan[c]) / max(T_total, 1.0))
-        end
+        # Closed-form Memoryless ISI Tail Estimator (Exact Renewal Floor)
+        init_bg .= estimate_isi_tail_baseline(data; sigma_prior=0.015)
     end
 
     # Setup ARD Manifold (alpha_prune = 6,500 s^-2) & Continuous OU Triad
