@@ -238,176 +238,60 @@ end
 
 
 
-"""
-    TaskRegime
+# =====================================================================
+# LEGACY CHECKPOINT COMPATIBILITY STRUCTS
+# (Deprecated: Replaced by Continuous OU Context & Conjugate Triad)
+# =====================================================================
 
-Discrete behavioral or kinematic task regime governing:
-1. Continuous kinematic subspace recruitment: lambda_u in R^R (clamped to lambda_dormant if dormant)
-2. Motor vigor: occurrence amplitude prior c_e ~ Gamma(alpha_c, beta_c)
-3. Scale gauge anchoring: Regime 1 strictly maintains lambda_1,r == 1.0 and beta_c == alpha_c
+"""
+    TaskRegime (Deprecated)
+Retained strictly for binary deserialization backward-compatibility with older .jls checkpoints.
 """
 mutable struct TaskRegime
     id::Int
     R::Int
-    # Kinematic subspace: dimensionless relative precision per axis
-    lambda_u::Vector{Float64}         # length R, anchored to 1.0 for id == 1
-    active_dims::BitVector             # true if lambda_u[r] < lambda_dormant
-    # Motor vigor (Amplitude prior)
+    lambda_u::Vector{Float64}
+    active_dims::BitVector
     alpha_c::Float64
-    beta_c::Float64                   # anchored to alpha_c for id == 1
-    # Running sufficient statistics
-    assigned_occurrences::Vector{Int}  # List of occurrence IDs
+    beta_c::Float64
+    assigned_occurrences::Vector{Int}
 end
 
-function TaskRegime(
-    id::Int, R::Int;
-    alpha_c::Float64=10.0, beta_c::Float64=10.0,
-    alpha_u::Float64=2.0, beta_u::Float64=2.0,
-    lambda_dormant::Float64=1000.0
-)
-    lambda_u = fill(1.0, R)
-    active_dims = trues(R)
-    return TaskRegime(id, R, lambda_u, active_dims, alpha_c, beta_c, Int[])
+function TaskRegime(id::Int, R::Int; alpha_c::Float64=10.0, beta_c::Float64=10.0, lambda_dormant::Float64=1000.0)
+    return TaskRegime(id, R, fill(1.0, R), trues(R), alpha_c, beta_c, Int[])
 end
 
-# Backward-compatibility alias
 const DiagonalRegime = TaskRegime
 
 """
-    Level5Hyperstate
-
-Maintains discrete task regimes, session motif Poisson arrival rates,
-and Dirichlet-Categorical mark distributions.
-
+    Level5Hyperstate (Deprecated)
+Retained strictly for binary deserialization backward-compatibility with older .jls checkpoints.
 """
 mutable struct Level5Hyperstate
     K::Int
     R::Int
     M::Int
     regimes::Dict{Int, TaskRegime}
-    lambda_dormant::Float64            # default: 1000.0
-    # Hyperpriors
-    a_u::Float64; b_u::Float64         # Gamma hyperprior on lambda_u (stiffened: 5.0, 5.0)
-    a_c::Float64; b_c::Float64         # Hyperprior on beta_c (10.0, 10.0)
-    alpha_pi::Float64                  # Dirichlet prior on pi_m
-    # Session-level motif Poisson rates & mark distributions
-    lambda_m::Vector{Float64}          # length M (rates in Hz)
-    pi_m::Matrix{Float64}              # M x K Dirichlet-Categorical regime weights
-    a_rate::Float64; b_rate::Float64   # Gamma prior on lambda_m
-    force_thresh::Float64              # Threshold on unregularized data MLE dispersion S^{data}_{k,r} (0.05)
-    # Nonparametric DP parameters
-    alpha_dp::Float64                  # DP concentration parameter
-    a_dp::Float64; b_dp::Float64       # Hyperprior on alpha_dp ~ Gamma(a_dp, 1/b_dp)
-    N_min::Int                         # Minimum cluster size to ratify (2)
+    lambda_dormant::Float64
+    a_u::Float64; b_u::Float64
+    a_c::Float64; b_c::Float64
+    alpha_pi::Float64
+    lambda_m::Vector{Float64}
+    pi_m::Matrix{Float64}
+    a_rate::Float64; b_rate::Float64
+    force_thresh::Float64
+    alpha_dp::Float64
+    a_dp::Float64; b_dp::Float64
+    N_min::Int
 end
 
-function Level5Hyperstate(
-    K::Int, R::Int, M::Int=100;
-    lambda_dormant::Float64=1000.0,
-    a_u::Float64=5.0, b_u::Float64=5.0,
-    a_c::Float64=10.0, b_c::Float64=10.0,
-    alpha_pi::Float64=1.0,
-    a_rate::Float64=1.0, b_rate::Float64=1.0,
-    force_thresh::Float64=0.05,
-    alpha_dp::Float64=1.0,
-    a_dp::Float64=1.0, b_dp::Float64=1.0,
-    N_min::Int=2
-)
+function Level5Hyperstate(K::Int, R::Int, M::Int=100; lambda_dormant::Float64=1000.0, a_u::Float64=5.0, b_u::Float64=5.0, a_c::Float64=10.0, b_c::Float64=10.0, alpha_pi::Float64=1.0, a_rate::Float64=1.0, b_rate::Float64=1.0, force_thresh::Float64=0.05, alpha_dp::Float64=1.0, a_dp::Float64=1.0, b_dp::Float64=1.0, N_min::Int=2)
     M_safe = max(M, 50)
     regimes = Dict{Int, TaskRegime}()
     for k in 1:K
         regimes[k] = TaskRegime(k, R; alpha_c=10.0, beta_c=10.0, lambda_dormant=lambda_dormant)
     end
-    lambda_m = fill(1.0, M_safe)
-    pi_m = fill(1.0 / K, M_safe, K)
-    return Level5Hyperstate(
-        K, R, M_safe, regimes, lambda_dormant,
-        a_u, b_u, a_c, b_c, alpha_pi,
-        lambda_m, pi_m, a_rate, b_rate, force_thresh,
-        alpha_dp, a_dp, b_dp, N_min
-    )
-end
-
-"""
-    ContinuousTimeCTMC
-
-Exact Continuous-Time Markov Chain (CTMC) state field S(t) in {1...K}
-coupled to marked point process via Rao-Teh uniformization and Region-Rank-1 baseline.
-
-Invariants & Closed Bounds:
-1. Structural Nyquist Bound: beta_q = (K - 1) * alpha_q * W_min
-   Guarantees E[|q_kk|] <= 1 / W_min under cold-start.
-2. Information Horizon: Region-Rank-1 baseline divides probe into MOp and CP,
-   cancelling channel nuisance parameters in likelihood ratios.
-3. Triad Scale Anchor: Regime 1 strictly pins:
-   gamma_{MOp, 1} == 1.0, gamma_{CP, 1} == 1.0, beta_{c, 1} == 10.0, Lambda_{u, 1} == I_R.
-4. Auxiliary Uniformization: Omega = max_k |q_kk| + xi, with xi ~ Gamma(a_omega, 1 / T_total).
-"""
-mutable struct ContinuousTimeCTMC
-    K::Int
-    Q::Matrix{Float64}                 # K x K generator matrix (q_kj >= 0, q_kk = -sum_{j!=k} q_kj)
-    Omega::Float64                     # Current uniformization rate (Hz)
-    W_min::Float64                     # Shortest motif carrier duration (s)
-    alpha_q::Float64                   # Gamma shape on q_kj
-    beta_q::Float64                    # Gamma rate on q_kj: (K-1) * alpha_q * W_min
-    a_omega::Float64                   # Gamma shape for Omega buffer xi (default: 120.0)
-    channel_region::Vector{Int}        # Length C: 1=MOp, 2=CP
-    gamma_tone::Matrix{Float64}        # 2 x K regional baseline multipliers (Regime 1 anchored at [1.0, 1.0])
-    cand_times::Vector{Float64}        # Auxiliary candidate transition times in [0, T]
-    cand_states::Vector{Int}           # Sampled discrete state S_b for interval [cand_times[b], cand_times[b+1]]
-    T_k::Vector{Float64}               # Length K: empirical dwell times
-    N_trans::Matrix{Int}               # K x K empirical transition counts
-    N_bg_mop_k::Vector{Float64}        # Length K: background spike counts in MOp per regime
-    N_bg_cp_k::Vector{Float64}         # Length K: background spike counts in CP per regime
-end
-
-function ContinuousTimeCTMC(
-    K::Int, N_channels::Int;
-    W_min::Float64=0.25,
-    alpha_q::Float64=2.0,
-    a_omega::Float64=120.0,
-    T_total::Float64=2114.0,
-    cp_range::UnitRange{Int}=99:301
-)
-    Q = zeros(Float64, K, K)
-    beta_q = max(1, K - 1) * alpha_q * W_min
-    prior_rate = 1.0 / (max(1, K - 1) * W_min)
-    for k in 1:K
-        for j in 1:K
-            if j != k
-                Q[k, j] = prior_rate
-            end
-        end
-        Q[k, k] = -sum(Q[k, j] for j in 1:K if j != k)
-    end
-
-    max_exit = maximum(abs(Q[k, k]) for k in 1:K)
-    Omega = max_exit + a_omega / max(1.0, T_total)
-
-    chan_reg = ones(Int, N_channels)
-    for c in 1:N_channels
-        if c in cp_range
-            chan_reg[c] = 2 # CP
-        else
-            chan_reg[c] = 1 # MOp
-        end
-    end
-
-    gamma_tone = ones(Float64, 2, K) # [region, k], Regime 1 anchored to 1.0
-
-    cand_times = Float64[0.0, T_total]
-    cand_states = Int[1]
-    T_k = zeros(Float64, K)
-    T_k[1] = T_total
-    N_trans = zeros(Int, K, K)
-    N_bg_mop_k = zeros(Float64, K)
-    N_bg_cp_k = zeros(Float64, K)
-
-    return ContinuousTimeCTMC(
-        K, Q, Omega, W_min, alpha_q, beta_q, a_omega,
-        chan_reg, gamma_tone, cand_times, cand_states,
-        T_k, N_trans, N_bg_mop_k, N_bg_cp_k
-    )
+    return Level5Hyperstate(K, R, M_safe, regimes, lambda_dormant, a_u, b_u, a_c, b_c, alpha_pi, fill(1.0, M_safe), fill(1.0 / K, M_safe, K), a_rate, b_rate, force_thresh, alpha_dp, a_dp, b_dp, N_min)
 end
 
 

@@ -321,7 +321,7 @@ end
         ctx::ContinuousOUContext,
         occurrences::Dict{Int, PureOccurrence},
         motifs::Dict{Int, PurePacketMotif},
-        hyperstate::Level5Hyperstate;
+        rates_arg=nothing;
         max_iter::Int=2
     )
 
@@ -331,15 +331,24 @@ function update_motif_ou!(
     ctx::ContinuousOUContext,
     occurrences::Dict{Int, PureOccurrence},
     motifs::Dict{Int, PurePacketMotif},
-    hyperstate::Level5Hyperstate;
+    rates_arg=nothing;
     max_iter::Int=2
 )
     occ_t = Float64[occ.tau for occ in values(occurrences)]
     occ_m = Int[occ.motif for occ in values(occurrences)]
     active_motifs = collect(keys(motifs))
+    M = size(ctx.y_motif, 1)
+
+    rates = if rates_arg isa Vector{Float64}
+        rates_arg
+    elseif rates_arg isa Level5Hyperstate
+        rates_arg.lambda_m
+    else
+        fill(1.0, M)
+    end
 
     smooth_point_process_intensity!(
-        ctx.y_motif, occ_t, occ_m, hyperstate.lambda_m,
+        ctx.y_motif, occ_t, occ_m, rates,
         ctx.dt_motif, ctx.tau_motif, ctx.sigma_motif,
         ctx.diag_buf, ctx.off_buf, ctx.rhs_buf, ctx.c_prime, ctx.d_prime;
         active_ids=active_motifs, max_iter=max_iter, zero_mean_gauge=true, clamp_val=2.5

@@ -188,45 +188,22 @@ function update_chan_to_motifs(motifs::Dict{Int, PurePacketMotif}, N_channels::I
 end
 
 
-function compute_active_regime_min_precisions(hyperstate::Union{Level5Hyperstate, Nothing}, R::Int)
-    if hyperstate === nothing || isempty(hyperstate.regimes) || R <= 0
-        return fill(1.0, max(R, 1))
-    end
-    active_regimes = [reg for reg in values(hyperstate.regimes) if !isempty(reg.assigned_occurrences) || reg.id == 1]
-    if isempty(active_regimes)
-        active_regimes = collect(values(hyperstate.regimes))
-    end
-    lambda_min = fill(Inf, R)
-    for reg in active_regimes
-        for r in 1:min(R, length(reg.lambda_u))
-            lambda_min[r] = min(lambda_min[r], reg.lambda_u[r])
-        end
-    end
-    for r in 1:R
-        if isinf(lambda_min[r]) || lambda_min[r] <= 0.0
-            lambda_min[r] = 1.0
-        end
-    end
-    return lambda_min
-end
-
 """
-    update_all_motif_bounds!(motifs::Dict{Int, PurePacketMotif}, hyperstate=nothing; kappa::Float64=4.0, kappa_u::Float64=3.0)
+    update_all_motif_bounds!(motifs::Dict{Int, PurePacketMotif}; bg_rates=nothing, kappa::Float64=4.0, kappa_u::Float64=3.0)
 
 Amortized batch update of dynamic bounding envelopes across all motifs.
-Called once per sweep after corridors, loadings W, and Level 5 regime precisions are updated.
+Called once per sweep after packet positions and loadings W are updated.
 Takes < 2 microseconds across M motifs.
 """
-function update_all_motif_bounds!(motifs::Dict{Int, PurePacketMotif}, hyperstate=nothing; kappa::Float64=4.0, kappa_u::Float64=3.0)
-    R = 0
-    if !isempty(motifs)
-        first_m = first(values(motifs))
-        R = size(first_m.W, 1)
-    end
-    lambda_min = compute_active_regime_min_precisions(hyperstate, R)
+function update_all_motif_bounds!(motifs::Dict{Int, PurePacketMotif}; bg_rates=nothing, kappa::Float64=4.0, kappa_u::Float64=3.0)
     for m in values(motifs)
-        update_motif_bounds!(m, lambda_min; kappa=kappa, kappa_u=kappa_u)
+        update_motif_bounds!(m; bg_rates=bg_rates, kappa=kappa, kappa_u=kappa_u)
     end
+end
+
+# Backward compatibility alias
+function update_all_motif_bounds!(motifs::Dict{Int, PurePacketMotif}, legacy_arg; bg_rates=nothing, kappa::Float64=4.0, kappa_u::Float64=3.0)
+    update_all_motif_bounds!(motifs; bg_rates=bg_rates, kappa=kappa, kappa_u=kappa_u)
 end
 
 

@@ -285,7 +285,7 @@ for sweep in 1:N_sweeps
     # 6a. Leg 1: Regional arousal x_region(t) (MOp & CP) and Single-cell micro-drift delta_x_c(t)
     update_regional_ou!(ou_ctx, assign, spike_t, spike_neuron, bg_rates; max_iter=2)
     update_cell_ou!(ou_ctx, assign, spike_t, spike_neuron, bg_rates; max_iter=2)
-    update_motif_ou!(ou_ctx, occurrences, motifs, hyperstate; max_iter=2)
+    update_motif_ou!(ou_ctx, occurrences, motifs; max_iter=2)
 
     # 6b. Leg 1: Continuous background rate draws with exact analytical T_eff integrals
     update_continuous_background_rates!(
@@ -301,7 +301,7 @@ for sweep in 1:N_sweeps
     sample_student_t_precisions!(ou_ctx, occurrences, count(ard_state.active_mask); rng=rng)
 
     # Update dynamic motif bounding envelopes
-    update_all_motif_bounds!(motifs, hyperstate)
+    update_all_motif_bounds!(motifs)
 
     # Diagnostics
     max_gauge_err = 0.0
@@ -320,7 +320,7 @@ for sweep in 1:N_sweeps
     dt_sw = time() - t0_sw
     n_spk = count(as -> as.event_id > 0, assign)
     mean_c_e = isempty(occurrences) ? 0.0 : mean(occ.amplitude for occ in values(occurrences))
-    energy_u = compute_joint_energy(motifs, occurrences, total_spikes_per_chan, bg_rates, ard_state, hyperstate, b.T; ou_ctx=ou_ctx)
+    energy_u = compute_joint_energy(motifs, occurrences, total_spikes_per_chan, bg_rates, ard_state, b.T; ou_ctx=ou_ctx)
     push!(energy_history, energy_u)
 
     println(@sprintf("%-5d | %-6d | %-7d | %-7d | %-8d | %-12d | %-8.4f | %-12.2e | %-12.2e | %-7.2f",

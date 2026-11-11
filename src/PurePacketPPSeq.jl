@@ -15,7 +15,6 @@ include("kinematics.jl")
 include("packet_birth_split.jl")
 include("occurrence_birth_prune.jl")
 include("gibbs_resample.jl")
-include("ctmc.jl")
 include("ou_engine.jl")
 include("triad_vigor.jl")
 include("metrics.jl")
@@ -33,9 +32,6 @@ export
     SpikeAssignment,
     ContinuousOUContext,
     ARDManifoldState,
-    TaskRegime,
-    Level5Hyperstate,
-    ContinuousTimeCTMC,
     AuditPacketInstance,
 
     # Bounds & Inverted Index
@@ -43,7 +39,6 @@ export
     update_all_motif_bounds!,
     rebuild_inverted_index!,
     update_chan_to_motifs,
-    compute_active_regime_min_precisions,
 
     # Kinematics
     project_translational_gauge!,
@@ -70,20 +65,6 @@ export
     resample_spike_pure_packet!,
     resample_all_spikes_pure_packet_threaded!,
     resample_background_pure_packet!,
-
-    # Regimes & CTMC
-    compact_regimes!,
-    sample_dp_concentration!,
-    maintain_majority_scale_gauge!,
-    resample_occurrence_regimes!,
-    sample_task_regimes!,
-    extend_task_regimes_dimension!,
-    sample_diagonal_regimes!,
-    sample_candidate_times!,
-    accumulate_interval_background_counts!,
-    accumulate_interval_motif_marks!,
-    sample_ctmc_state_trajectory!,
-    update_ctmc_parameters!,
 
     # OU Engine
     exp_integral_segment,

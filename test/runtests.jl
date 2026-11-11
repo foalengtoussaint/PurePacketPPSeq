@@ -547,24 +547,19 @@ end
     end
 
     # -------------------------------------------------------------
-    # TEST 11: LEVEL m=5 TASK REGIMES & KINEMATIC SUBSPACE
     # -------------------------------------------------------------
-    @testset "Level m=5 Task Regimes & Kinematic Subspace" begin
-        K = 2
+    # TEST 11: LEVEL m=5 CONJUGATE TRIAD MOTOR VIGOR & KINEMATIC SUBSPACE
+    # -------------------------------------------------------------
+    @testset "Level m=5 Conjugate Triad Motor Vigor & Kinematics" begin
         R = 2
         M = 2
-        hyperstate = Level5Hyperstate(K, R, M; force_thresh=0.01)
-
-        # Invariant 1: Scale Anchoring on Regime 1
-        @test hyperstate.regimes[1].lambda_u == [1.0, 1.0]
-        @test hyperstate.regimes[1].alpha_c == hyperstate.regimes[1].beta_c
 
         # Setup 2 motifs
         p1 = Packet(1, 1, 0.0, 0.0004, 2.0)
         p2 = Packet(2, 2, 0.1, 0.0004, 2.0)
         m1 = PurePacketMotif(1, [p1, p2], R, 2)
         m1.W[1, 1] = 0.02; m1.W[1, 2] = -0.02
-        m1.W[2, 1] = 0.00; m1.W[2, 2] = 0.00 # Axis 2 has zero loading (dormant candidate)
+        m1.W[2, 1] = 0.00; m1.W[2, 2] = 0.00
 
         motifs = Dict(1 => m1)
 
@@ -573,7 +568,7 @@ end
         occs = Dict{Int, PureOccurrence}()
         for e in 1:10
             occ = PureOccurrence(e, 1, 10.0 + e, R, 2; amplitude=1.0)
-            occ.counts = [2, 2]
+            occ.counts = [2, 2] # 4 spikes == 4 expected
             occ.sum_t = [occ.tau, occ.tau + 0.1]
             occ.u = [0.01 * randn(rng), 0.0]
             occs[e] = occ
@@ -582,216 +577,80 @@ end
         # Group 2 (10 occs): high vigor (c_e ~ 2.5), wide u_e along Axis 1
         for e in 11:20
             occ = PureOccurrence(e, 1, 30.0 + e, R, 2; amplitude=2.5)
-            occ.regime_id = 2
-            occ.counts = [5, 5]
-            # Residual pull along Axis 1
-            occ.sum_t = [occ.tau + 0.01, occ.tau + 0.09] # pull on W[1, :]
+            occ.counts = [5, 5] # 10 spikes > 4 expected
+            occ.sum_t = [occ.tau + 0.01, occ.tau + 0.09]
             occ.u = [0.8 * randn(rng), 0.0]
             occs[e] = occ
         end
 
-        # Set Regime 2 prior: higher vigor (beta_c = 4.0 vs alpha_c = 10.0 => E[c] = 2.5)
-        hyperstate.regimes[2].beta_c = 4.0
-        hyperstate.pi_m[1, :] = [0.5, 0.5]
+        # Group 3 (5 ghost occs): zero spikes
+        for e in 21:25
+            occ = PureOccurrence(e, 1, 60.0 + e, R, 2; amplitude=1.0)
+            occ.counts = [0, 0]
+            occ.sum_t = [0.0, 0.0]
+            occ.u = [0.0, 0.0]
+            occs[e] = occ
+        end
 
-        # Test Step 5A: resample occurrence regimes
-        resample_occurrence_regimes!(hyperstate, occs, motifs; rng=rng)
+        # 1. Test Conjugate Triad Motor Vigor Shape Pin (alpha_c == 10.0, beta_c == 10.0 => E[c] == 1.0)
+        ctx = ContinuousOUContext(2, 100.0; alpha_c=10.0)
+        update_vigor_shape!(ctx, occs)
+        @test ctx.alpha_c == 10.0
 
-        # High-vigor occurrences should predominantly choose Regime 2
-        high_vigor_reg2 = count(e -> occs[e].regime_id == 2, 11:20)
-        low_vigor_reg1 = count(e -> occs[e].regime_id == 1, 1:10)
-        @test high_vigor_reg2 >= 7
-        @test low_vigor_reg1 >= 7
+        # Sample continuous amplitudes under Gamma(alpha_c + N_e, alpha_c + M_mass)
+        sample_continuous_occurrence_amplitudes!(occs, motifs, ctx.alpha_c; rng=rng)
 
-        # Test Step 5B, 5C, 5D: sample task regimes
-        sample_task_regimes!(hyperstate, occs, motifs; T_total=100.0, rng=rng)
+        # Baseline occurrences should center around (10 + 4) / (10 + 4) = 1.0
+        mean_base = mean([occs[e].amplitude for e in 1:10])
+        @test isapprox(mean_base, 1.0, atol=0.20)
 
-        # Verify Regime 1 scale invariants preserved strictly
-        @test hyperstate.regimes[1].lambda_u == [1.0, 1.0]
-        @test hyperstate.regimes[1].beta_c == hyperstate.regimes[1].alpha_c
+        # High-spike occurrences should center around (10 + 10) / (10 + 4) = 1.43
+        mean_high = mean([occs[e].amplitude for e in 11:20])
+        @test mean_high > mean_base
+        @test isapprox(mean_high, 1.43, atol=0.25)
 
-        # Verify Axis 2 is flagged as dormant in Regime 2 (zero loading -> zero force)
-        @test hyperstate.regimes[2].active_dims[2] == false
-        @test hyperstate.regimes[2].lambda_u[2] == hyperstate.lambda_dormant
+        # Ghost occurrences should be strongly suppressed: (10 + 0) / (10 + 4) = 0.714
+        mean_ghost = mean([occs[e].amplitude for e in 21:25])
+        @test mean_ghost < mean_base
+        @test mean_ghost < 0.90
+        println("Conjugate Triad Motor Vigor verified: Baseline = ", round(mean_base, digits=3), " | High = ", round(mean_high, digits=3), " | Ghost = ", round(mean_ghost, digits=3))
 
-        # Test Zero-Allocation in inner solve using regime precisions
+        # 2. Test Student-t Robust Kinematics Scale Mixture Precisions tau_e | u_e
+        sample_student_t_precisions!(ctx, occs, R; rng=rng)
+        # Tight occurrences (u_e ~ 0) have precision around (nu + R) / nu = (4 + 2) / 4 = 1.5
+        tight_precisions = [ctx.tau_precisions[e] for e in 1:10]
+        @test mean(tight_precisions) > 0.8
+
+        # Create extreme kinematic outlier occurrence
+        occ_outlier = PureOccurrence(99, 1, 90.0, R, 2; amplitude=1.0)
+        occ_outlier.u = [4.0, 3.0] # ||u||^2 = 25.0!
+        occs[99] = occ_outlier
+        sample_student_t_precisions!(ctx, occs, R; rng=rng)
+        outlier_prec = ctx.tau_precisions[99]
+        # (nu + R) / (nu + 25) = 6 / 29 = 0.207
+        @test outlier_prec < 0.50
+        println("Student-t Kinematic Precision verified: Tight mean = ", round(mean(tight_precisions), digits=3), " | Outlier = ", round(outlier_prec, digits=3))
+
+        # 3. Test Zero-Allocation in inner solve using continuous precisions
         u_out = zeros(Float64, R)
         active_mask = trues(R)
         res = [0.005, -0.005]
         prec = [2500.0, 2500.0]
-        allocs = check_coord_alloc(
-            u_out, m1, active_mask, res, prec,
-            hyperstate.regimes[2].lambda_u, rng
-        )
+        prior_p = fill(1.0, R)
+        allocs = check_coord_alloc(u_out, m1, active_mask, res, prec, prior_p, rng)
         @test allocs == 0
-        println("Zero-allocation solve with regime prior: ", allocs, " bytes")
+        println("Zero-allocation solve with continuous precision prior: ", allocs, " bytes")
 
-        # Test Dynamic Dimensional Growth Hook R -> R+1
+        # 4. Test Dynamic Dimensional Growth R -> R+1
         m1.W = vcat(m1.W, [0.015 -0.015]) # New dimension 3 has active loadings
-        extend_task_regimes_dimension!(hyperstate, motifs, occs, 3)
-        @test hyperstate.R == 3
-        @test length(hyperstate.regimes[1].lambda_u) == 3
-        @test hyperstate.regimes[1].lambda_u[3] == 1.0
-        @test length(hyperstate.regimes[2].lambda_u) == 3
-        println("Dynamic growth R -> 3 successful; Regime 1 lambda_u: ", hyperstate.regimes[1].lambda_u)
+        @test size(m1.W, 1) == 3
+        # Invalidate and update bounds
+        update_motif_bounds!(m1)
+        @test m1.delta_left < -0.040
+        @test m1.delta_right > 0.140
+        println("Dynamic growth R -> 3 successful; W size: ", size(m1.W))
     end
 
-    # -------------------------------------------------------------
-    # TEST 12: LEVEL m=5 DYNAMIC BIRTH, DEATH & SCALE GAUGE HANDOVER
-    # -------------------------------------------------------------
-    @testset "Level m=5 Dynamic Birth, Death & Scale Gauge Handover" begin
-        rng = MersenneTwister(42)
-        R = 2
-        M = 2
-        p1 = Packet(1, 1, 0.0, 0.0004, 2.0)
-        p2 = Packet(2, 2, 0.1, 0.0004, 2.0)
-        m1 = PurePacketMotif(1, [p1, p2], R, 2)
-        m1.W[1, 1] = 0.02; m1.W[1, 2] = -0.02
-        m1.W[2, 1] = 0.00; m1.W[2, 2] = 0.00
-        motifs = Dict(1 => m1)
-
-        # 1. Test Sequential Dynamic Birth (K -> K+1) from scratch (K=1)
-        hyperstate = Level5Hyperstate(1, R, M; alpha_dp=1.0, N_min=2, force_thresh=0.05)
-        @test hyperstate.K == 1
-
-        occs_birth = Dict{Int, PureOccurrence}()
-        # 10 baseline occurrences (N_e = 4 spikes vs 4 expected, c_e = 1.0)
-        for e in 1:10
-            occ = PureOccurrence(e, 1, 10.0 + e, R, 2; amplitude=1.0)
-            occ.counts = [2, 2]
-            occ.sum_t = [occ.tau, occ.tau + 0.1]
-            occ.u = [0.01 * randn(rng), 0.0]
-            occs_birth[e] = occ
-        end
-        # 10 massive high-vigor burst occurrences (N_e = 20 spikes vs 4 expected, c_e = 5.0)
-        for e in 11:20
-            occ = PureOccurrence(e, 1, 30.0 + e, R, 2; amplitude=5.0)
-            occ.counts = [10, 10]
-            occ.sum_t = [occ.tau + 0.01, occ.tau + 0.09]
-            occ.u = [0.02 * randn(rng), 0.0]
-            occs_birth[e] = occ
-        end
-
-        # Run sequential leave-one-out CRP
-        resample_occurrence_regimes!(hyperstate, occs_birth, motifs; rng=rng)
-
-        # Verify a 2nd regime was birthed dynamically
-        @test hyperstate.K >= 2
-        println("Dynamic sequential birth successful: K grew from 1 to ", hyperstate.K)
-        # High-vigor burst occurrences should have coalesced into the new regime
-        birthed_reg_id = occs_birth[11].regime_id
-        @test birthed_reg_id >= 2
-        high_vigor_coalesced = count(e -> occs_birth[e].regime_id == birthed_reg_id, 11:20)
-        @test high_vigor_coalesced >= 8
-        println("High-vigor occurrences coalesced into birthed Regime ", birthed_reg_id, ": ", high_vigor_coalesced, "/10")
-
-        # 2. Test Candidate Staging & Lone Singleton Dissolution (N_min >= 2)
-        # Create a lone singleton occurrence in Regime 2
-        hyperstate2 = Level5Hyperstate(2, R, M; N_min=2)
-        occs_single = Dict{Int, PureOccurrence}()
-        for e in 1:15
-            occ = PureOccurrence(e, 1, 10.0 + e, R, 2; amplitude=1.0)
-            occ.regime_id = 1
-            occ.counts = [2, 2]
-            occ.sum_t = [occ.tau, occ.tau + 0.1]
-            occ.u = [0.01 * randn(rng), 0.0]
-            occs_single[e] = occ
-        end
-        # Occurrence 16 is a lone outlier
-        lone_occ = PureOccurrence(16, 1, 50.0, R, 2; amplitude=1.2)
-        lone_occ.regime_id = 2
-        lone_occ.counts = [2, 2]
-        lone_occ.sum_t = [lone_occ.tau, lone_occ.tau + 0.1]
-        lone_occ.u = [0.01 * randn(rng), 0.0]
-        occs_single[16] = lone_occ
-
-        push!(hyperstate2.regimes[2].assigned_occurrences, 16)
-        for e in 1:15
-            push!(hyperstate2.regimes[1].assigned_occurrences, e)
-        end
-
-        # Run resample: lone candidate should dissolve and absorb into Regime 1
-        resample_occurrence_regimes!(hyperstate2, occs_single, motifs; rng=rng)
-        @test hyperstate2.K == 1
-        @test !haskey(hyperstate2.regimes, 2)
-        @test occs_single[16].regime_id == 1
-        println("Lone singleton successfully dissolved; K compacted to 1.")
-
-        # 3. Test Unregularized Data MLE Dormancy Test (S^{data}_{k,r} > 0.05)
-        hyperstate3 = Level5Hyperstate(2, R, M; force_thresh=0.05)
-        # Regime 2 has 10 occurrences with strong data residual drive along Axis 1, zero on Axis 2
-        for e in 1:10
-            occ = PureOccurrence(e, 1, 10.0 + e, R, 2; amplitude=1.0)
-            occ.regime_id = 2
-            occ.counts = [4, 4]
-            # Mean timing res: (tau + 0.02) - tau = 0.02 on pkt 1, (tau - 0.02) - (tau + 0.1) = -0.12 on pkt 2
-            occ.sum_t = [4.0 * (occ.tau + 0.02), 4.0 * (occ.tau + 0.08)]
-            occ.u = [0.1, 0.0]
-            push!(hyperstate3.regimes[2].assigned_occurrences, e)
-            occs_single[e] = occ
-        end
-        sample_task_regimes!(hyperstate3, occs_single, motifs; T_total=100.0, rng=rng)
-        @test hyperstate3.regimes[2].active_dims[1] == true
-        @test hyperstate3.regimes[2].active_dims[2] == false
-        @test hyperstate3.regimes[2].lambda_u[2] == hyperstate3.lambda_dormant
-        println("Unregularized dormancy verified: Axis 1 active, Axis 2 clamped to dormant floor.")
-
-        # 4. Test Exact Majority Scale-Gauge Handover & ARD Rescaling
-        ard_state = ARDManifoldState(R; a0=1e-3, b0=1.0e-6)
-        ard_state.alpha = [100.0, 200.0]
-
-        # Setup: Regime 1 has 3 occurrences; Regime 2 has 12 occurrences (Regime 2 is majority)
-        empty!(hyperstate3.regimes[1].assigned_occurrences)
-        empty!(hyperstate3.regimes[2].assigned_occurrences)
-        for e in 1:3
-            occs_single[e].regime_id = 1
-            push!(hyperstate3.regimes[1].assigned_occurrences, e)
-        end
-        for e in 4:15
-            occs_single[e].regime_id = 2
-            push!(hyperstate3.regimes[2].assigned_occurrences, e)
-        end
-
-        # Give Regime 2 non-trivial scale: lambda = 4.0, beta_c = 25.0 (alpha_c = 10.0 => E[c] = 0.4)
-        hyperstate3.regimes[2].lambda_u = [4.0, 1000.0]
-        hyperstate3.regimes[2].beta_c = 25.0
-
-        # Snapshot pre-handover physical observables
-        pre_shifts = [m1.W[1, 1] * occs_single[e].u[1] for e in 1:15]
-        pre_poisson_rates = [occs_single[e].amplitude * m1.packets[1].mass for e in 1:15]
-
-        # Execute Majority Scale-Gauge Handover
-        k_crowned = maintain_majority_scale_gauge!(hyperstate3, occs_single, motifs, ard_state)
-        @test k_crowned == 2
-
-        # Invariant A: Newly crowned Regime 1 has unit precision and unit vigor expectation
-        @test hyperstate3.regimes[1].lambda_u[1] == 1.0
-        @test hyperstate3.regimes[1].beta_c == hyperstate3.regimes[1].alpha_c
-        @test length(hyperstate3.regimes[1].assigned_occurrences) == 12
-
-        # Invariant B: Exact physical temporal shifts W_{r,p} * u_{e,r} invariant to machine precision
-        post_shifts = [m1.W[1, 1] * occs_single[e].u[1] for e in 1:15]
-        max_shift_diff = maximum(abs.(post_shifts .- pre_shifts))
-        @test max_shift_diff < 1e-12
-        println("Physical temporal shift invariance: max diff = ", max_shift_diff)
-
-        # Invariant C: Exact physical Poisson rates c_e * a_{m,p} invariant to machine precision
-        post_poisson_rates = [occs_single[e].amplitude * m1.packets[1].mass for e in 1:15]
-        max_rate_diff = maximum(abs.(post_poisson_rates .- pre_poisson_rates))
-        @test max_rate_diff < 1e-12
-        println("Physical Poisson rate invariance: max diff = ", max_rate_diff)
-
-        # Invariant D: ARD precision correctly rescaled by lambda_{k_max, r} = 4.0
-        @test isapprox(ard_state.alpha[1], 100.0 * 4.0, atol=1e-10)
-        println("ARD precision alpha_1 exactly rescaled: 100.0 -> ", ard_state.alpha[1])
-
-        # 5. Test Escobar-West Concentration Sampler
-        initial_alpha_dp = hyperstate3.alpha_dp
-        sample_dp_concentration!(hyperstate3; rng=rng)
-        @test hyperstate3.alpha_dp > 0.01
-        @test hyperstate3.alpha_dp <= 50.0
-        println("Escobar-West alpha_dp update: ", round(initial_alpha_dp, digits=3), " -> ", round(hyperstate3.alpha_dp, digits=3))
-    end
 
     # -------------------------------------------------------------
     # TEST 13: BIOPHYSICAL RAYLEIGH GATE & CONTINUOUS SNR PRUNING (RULES 1, 2, 3)
@@ -1032,106 +891,66 @@ end
     end
 
     # =====================================================================
-    # 13. EXACT CONTINUOUS-TIME CTMC UNIFORMIZATION & REGION-RANK-1 BASELINE
+    # 13. SCALE n=1 CONTINUOUS MOTIF ENGAGEMENT & DYNAMIC OU SMOOTHING
     # =====================================================================
-    @testset "Exact Continuous-Time CTMC Uniformization & Region-Rank-1 Baseline" begin
+    @testset "Scale n=1 Continuous Motif Engagement & Dynamic OU Smoothing" begin
         rng = MersenneTwister(1234)
-        K = 3
-        N_chans = 426
-        W_min = 0.25
-        alpha_q = 2.0
-        T_total = 2114.0
+        T_total = 200.0
+        N_chans = 50
+        M = 2
+        R = 2
 
-        # 1. CTMC Initialization & Structural Nyquist Carrier Bound
-        ctmc = ContinuousTimeCTMC(K, N_chans; W_min=W_min, alpha_q=alpha_q, T_total=T_total, cp_range=99:301)
-        @test ctmc.K == 3
-        @test isapprox(ctmc.beta_q, (K - 1) * alpha_q * W_min) # (3-1)*2*0.25 = 1.0 s
-        # Expected total exit rate must equal 1 / W_min = 4.0 Hz
-        expected_exit = sum(ctmc.Q[1, j] for j in 2:3)
-        @test isapprox(expected_exit, 1.0 / W_min) # 4.0 Hz
-        @test isapprox(ctmc.Q[1, 1], -4.0)
-        # Verify regional mapping: MOp (1..98, 302..426), CP (99..301)
-        @test ctmc.channel_region[1] == 1
-        @test ctmc.channel_region[98] == 1
-        @test ctmc.channel_region[99] == 2
-        @test ctmc.channel_region[301] == 2
-        @test ctmc.channel_region[302] == 1
-        @test count(==(2), ctmc.channel_region) == 203
-        @test count(==(1), ctmc.channel_region) == 223
+        ctx = ContinuousOUContext(
+            N_chans, T_total;
+            dt_motif=1.0, tau_motif=10.0, sigma_motif=0.5,
+            alpha_c=10.0
+        )
+        @test size(ctx.y_motif, 1) >= M
+        @test size(ctx.y_motif, 2) == ctx.B_motif
+        @test ctx.B_motif == ceil(Int, T_total / 1.0) + 1
 
-        # 2. Auxiliary Candidate Times T_cand ~ Poisson(Omega)
-        times = sample_candidate_times!(ctmc, T_total; rng=rng)
-        @test issorted(times)
-        @test times[1] == 0.0
-        @test times[end] == T_total
-        @test length(times) > 1000
-
-        # 3. Two-Pointer Background Spike Accumulation
-        N_spk = 10_000
-        mock_t = sort(rand(rng, N_spk) .* T_total)
-        mock_neurons = rand(rng, 1:N_chans, N_spk)
-        mock_assign = [SpikeAssignment(0, 0) for _ in 1:N_spk]
-        B = length(times) - 1
-        N_mop = zeros(Int, B)
-        N_cp = zeros(Int, B)
-        accumulate_interval_background_counts!(N_mop, N_cp, times, mock_t, mock_neurons, mock_assign, ctmc.channel_region)
-        total_counted = sum(N_mop) + sum(N_cp)
-        @test total_counted == N_spk
-        println("Linear O(N + B) spike accumulation verified: ", total_counted, " / ", N_spk, " spikes exact match.")
-
-        # 4. FFBS State Trajectory and Occurrence Coupling
-        hyperstate = Level5Hyperstate(K, 2, 5)
-        occs = Dict{Int, PureOccurrence}()
-        for e in 1:10
-            occ = PureOccurrence(e, 1, 100.0 * e, 2, 2; amplitude=1.0)
-            occ.counts = [5, 5]
-            occ.sum_t = [5.0 * occ.tau, 5.0 * (occ.tau + 0.05)]
-            occs[e] = occ
-        end
+        # Motifs
         p1 = Packet(1, 1, 0.0, 0.0001, 1.0)
         p2 = Packet(2, 2, 0.05, 0.0001, 1.0)
-        motifs = Dict(1 => PurePacketMotif(1, [p1, p2], 2, N_chans))
-        bg_rates = fill(2.0, N_chans)
-
-        sample_ctmc_state_trajectory!(
-            ctmc, hyperstate, occs, motifs,
-            mock_t, mock_neurons, mock_assign, bg_rates, T_total;
-            rng=rng
+        motifs = Dict(
+            1 => PurePacketMotif(1, [p1], R, N_chans),
+            2 => PurePacketMotif(2, [p2], R, N_chans)
         )
-        @test length(ctmc.cand_states) == length(ctmc.cand_times) - 1
-        @test all(1 <= s <= K for s in ctmc.cand_states)
-        # Verify occurrence coupling k_e == S(tau_e)
-        for occ in values(occs)
-            b_occ = searchsortedlast(ctmc.cand_times, occ.tau)
-            b_occ = clamp(b_occ, 1, B)
-            @test occ.regime_id == ctmc.cand_states[b_occ]
-        end
-        # Verify dwell time partition sums to T_total
-        @test isapprox(sum(ctmc.T_k), T_total, atol=1e-5)
-        println("Exact FFBS continuous trajectory verified: sum(T_k) = ", round(sum(ctmc.T_k), digits=2), " s (Exact T_total)")
 
-        # 5. Triad Scale Anchor & Conjugate Updates
-        update_ctmc_parameters!(
-            ctmc, hyperstate, occs, motifs,
-            bg_rates, mock_neurons, mock_assign, T_total;
-            rng=rng
-        )
-        # Triad anchor checks
-        @test ctmc.gamma_tone[1, 1] == 1.0 # MOp Regime 1
-        @test ctmc.gamma_tone[2, 1] == 1.0 # CP Regime 1
-        @test hyperstate.regimes[1].beta_c == hyperstate.regimes[1].alpha_c # E[c | 1] == 1.0
-        @test hyperstate.regimes[1].lambda_u == [1.0, 1.0] # Lambda_{u,1} == I_R
-        # Generator matrix rows sum to 0.0
-        for k in 1:K
-            @test isapprox(sum(ctmc.Q[k, :]), 0.0, atol=1e-10)
-            @test ctmc.Q[k, k] < 0.0
+        # Create occurrences: Motif 1 clustered in first half [0, 80s], Motif 2 in second half [120, 200s]
+        occs = Dict{Int, PureOccurrence}()
+        idx = 1
+        for t in 5.0:5.0:80.0
+            occs[idx] = PureOccurrence(idx, 1, t, R, 1; amplitude=1.0)
+            idx += 1
         end
-        # Uniformization rate Omega strictly dominates max exit rate
-        max_exit = maximum(abs(ctmc.Q[k, k]) for k in 1:K)
-        @test ctmc.Omega > max_exit
-        println("Triad Scale Gauge verified: Regime 1 strictly anchored; Omega = ", round(ctmc.Omega, digits=4), " > max |q_kk| = ", round(max_exit, digits=4))
+        for t in 125.0:5.0:195.0
+            occs[idx] = PureOccurrence(idx, 2, t, R, 1; amplitude=1.0)
+            idx += 1
+        end
 
-        # 6. Cramér-Rao Manifold Pruning Default
+        # Test update_motif_ou! without hyperstate
+        update_motif_ou!(ctx, occs, motifs; max_iter=3)
+
+        # Invariant 1: Zero-mean gauge across time
+        mean_y1 = mean(ctx.y_motif[1, :])
+        mean_y2 = mean(ctx.y_motif[2, :])
+        @test isapprox(mean_y1, 0.0, atol=1e-12)
+        @test isapprox(mean_y2, 0.0, atol=1e-12)
+
+        # Invariant 2: Motif 1 engagement y_1(t) is positive during [0, 80] and negative during [120, 200]
+        B_half = div(size(ctx.y_motif, 2), 2)
+        y1_first_half = mean(ctx.y_motif[1, 1:B_half])
+        y1_second_half = mean(ctx.y_motif[1, (B_half+1):end])
+        @test y1_first_half > y1_second_half
+
+        # Invariant 3: Motif 2 engagement y_2(t) is negative during [0, 80] and positive during [120, 200]
+        y2_first_half = mean(ctx.y_motif[2, 1:B_half])
+        y2_second_half = mean(ctx.y_motif[2, (B_half+1):end])
+        @test y2_second_half > y2_first_half
+        println("Scale n=1 Continuous Motif Engagement verified: y_1 first half = ", round(y1_first_half, digits=3), " > second half = ", round(y1_second_half, digits=3))
+
+        # Cramér-Rao Manifold Pruning Default
         ard_st = ARDManifoldState(4)
         @test ard_st.prune_threshold == 6500.0
         println("Cramér-Rao manifold pruning bound verified: alpha_prune = 6500.0 s^-2")

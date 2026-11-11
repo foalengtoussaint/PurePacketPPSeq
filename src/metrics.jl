@@ -278,7 +278,6 @@ function compute_joint_energy(
     total_spikes_per_chan::Vector{Int},
     bg_rates::Vector{Float64},
     ard_state::ARDManifoldState,
-    hyperstate::Level5Hyperstate,
     T_total::Float64;
     ou_ctx::Union{Nothing, ContinuousOUContext}=nothing,
     alpha_a::Float64 = 1.0,
@@ -324,23 +323,17 @@ function compute_joint_energy(
         # Prior on onset tau_e ~ Uniform(0, T_total)
         log_prior += -log(max(T_total, 1.0))
 
-        # Prior on amplitude c_e ~ Gamma(alpha_c, beta_c) under continuous vigor or assigned regime
-        if ou_ctx !== nothing
-            a_c = ou_ctx.alpha_c
-            b_c = ou_ctx.alpha_c
-        else
-            reg_id = (occ.regime_id >= 1 && occ.regime_id <= hyperstate.K) ? occ.regime_id : 1
-            reg = hyperstate.regimes[reg_id]
-            a_c = reg.alpha_c
-            b_c = reg.beta_c
-        end
+        # Prior on amplitude c_e ~ Gamma(alpha_c, beta_c) under continuous vigor anchor E[c_e] = 1.0
+        a_c = ou_ctx !== nothing ? ou_ctx.alpha_c : 10.0
+        b_c = a_c
         log_prior += a_c * log(b_c) - loggamma(a_c) + (a_c - 1.0) * log(max(c_e, 1e-12)) - b_c * c_e
 
-        # Prior on latent kinematics u_e ~ N(0, Lambda_u^-1)
+        # Prior on latent kinematics u_e ~ N(0, tau_e^-1 I)
         tau_prec = ou_ctx !== nothing ? get(ou_ctx.tau_precisions, occ.id, 1.0) : 1.0
-        for r in 1:hyperstate.R
-            if ard_state.active_mask[r]
-                lam_r = ou_ctx !== nothing ? tau_prec : max(reg.lambda_u[r], 1e-12)
+        R_dim = ard_state.R_max
+        for r in 1:min(R_dim, length(ard_state.active_mask))
+            if ard_state.active_mask[r] && r <= length(u_e)
+                lam_r = tau_prec
                 log_prior += 0.5 * log(lam_r) - 0.5 * log(2π) - 0.5 * lam_r * u_e[r]^2
             end
         end
@@ -394,3 +387,22 @@ function compute_joint_energy(
     joint_energy = -(log_lik + log_prior)
     return joint_energy
 end
+
+"""
+    compute_joint_energy(motifs, occurrences, total_spikes_per_chan, bg_rates, ard_state, legacy_arg, T_total; kwargs...)
+
+Backward compatibility overload accepting the legacy 7-argument signature (ignoring `legacy_arg` like `hyperstate`).
+"""
+function compute_joint_energy(
+    motifs::Dict{Int, PurePacketMotif},
+    occurrences::Dict{Int, PureOccurrence},
+    total_spikes_per_chan::Vector{Int},
+    bg_rates::Vector{Float64},
+    ard_state::ARDManifoldState,
+    legacy_arg,
+    T_total::Float64;
+    kwargs...
+)
+    return compute_joint_energy(motifs, occurrences, total_spikes_per_chan, bg_rates, ard_state, T_total; kwargs...)
+end
+
