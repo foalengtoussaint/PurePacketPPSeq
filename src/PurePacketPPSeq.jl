@@ -152,6 +152,7 @@ export
     # MCMC Sweep Engine & High-Level Fitting
     PurePacketModel,
     initialize_scratch_model,
+    resume_model_from_checkpoint,
     allocate_thread_buffers,
     allocate_birth_buffers,
     step_pure_packet_sweep!,

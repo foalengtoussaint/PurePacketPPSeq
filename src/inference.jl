@@ -184,6 +184,48 @@ function initialize_scratch_model(
 end
 
 """
+    resume_model_from_checkpoint(ck_path::String, data::SpikeDataset; R_max::Int=4) -> PurePacketModel
+
+Restores a complete PurePacketModel state from a serialized checkpoint .jls file.
+"""
+function resume_model_from_checkpoint(ck_path::String, data::SpikeDataset; R_max::Int=4)::PurePacketModel
+    raw = open(ck_path, "r") do io
+        deserialize(io)
+    end
+    N_channels = data.N_channels
+    T_total = data.T_total
+
+    counts_bg = zeros(Int, N_channels)
+    for (i, as) in enumerate(raw.assign)
+        if as.event_id == 0
+            counts_bg[data.neuron[i]] += 1
+        end
+    end
+
+    audit = select_stratified_audit_channels(raw.motifs, raw.bg_rates, N_channels; n_signal=10, n_quiet=10)
+
+    println(@sprintf("Model Resumed from Checkpoint: %d Motifs, %d Occurrences, %d Background Spikes (mean bg_rate = %.4f Hz).",
+            length(raw.motifs), length(raw.occurrences), sum(counts_bg), mean(raw.bg_rates)))
+
+    return PurePacketModel(
+        raw.motifs,
+        raw.occurrences,
+        raw.assign,
+        raw.bg_rates,
+        counts_bg,
+        raw.ard_state,
+        raw.hyperstate,
+        raw.ou_ctx,
+        audit,
+        R_max,
+        N_channels,
+        T_total,
+        raw.energy_history,
+        raw.ks_history
+    )
+end
+
+"""
     allocate_thread_buffers(max_threads::Int=Threads.maxthreadid(); rng=Random.default_rng())
 
 Allocates zero-allocation thread-local buffers and PRNGs for parallel spike resampling.
@@ -543,6 +585,7 @@ function fit!(
     model::PurePacketModel,
     data::SpikeDataset;
     sweeps::Int=50,
+    start_sweep::Int=1,
     checkpoint_path::String="",
     checkpoint_interval::Int=5,
     frozen_motif_ids::Set{Int}=Set{Int}(),
@@ -553,11 +596,11 @@ function fit!(
     thread_bufs = allocate_thread_buffers(Threads.maxthreadid(); rng=rng)
     birth_bufs = allocate_birth_buffers(data.chan_to_spikes)
 
-    println(@sprintf("\nStarting %d Sweeps on marked point-process (T = %.2f s)...", sweeps, data.T_total))
+    println(@sprintf("\nStarting Sweeps %d to %d on marked point-process (T = %.2f s)...", start_sweep, sweeps, data.T_total))
     print_diagnostics_header()
 
     try
-        for sweep in 1:sweeps
+        for sweep in start_sweep:sweeps
             t0_sw = time()
 
             # Execute single complete MCMC sweep
