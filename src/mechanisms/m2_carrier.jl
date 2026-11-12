@@ -698,8 +698,11 @@ function detect_and_birth_occurrences!(
                     fill!(incumbent.counts, 0)
                     fill!(incumbent.sum_t, 0.0)
                     fill!(incumbent.sum_t2, 0.0)
-                    for r in 1:R_max
+                    for r in 1:min(length(incumbent.u), curr_R)
                         incumbent.u[r] = u_star_vec[r]
+                    end
+                    for r in (curr_R + 1):length(incumbent.u)
+                        incumbent.u[r] = 0.0
                     end
                     incumbent.tau = tau_star
                     for k_idx in 1:N_cand
