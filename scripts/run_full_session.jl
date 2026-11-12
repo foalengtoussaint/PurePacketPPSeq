@@ -21,7 +21,7 @@ ck_path = isfile(joinpath(@__DIR__, "checkpoint_pure_packet_scratch_50sweeps.jls
 loaded = load_checkpoint_motifs(ck_path; N_channels=411)
 
 # 2. Initialize model across full session using learned Phase 1 background rates & dynamic manifold
-model = initialize_scratch_model(data, loaded.motifs; bg_rates=loaded.bg_rates, R_init=length(loaded.ard_state.active_mask))
+model = initialize_scratch_model(data, loaded.motifs; bg_rates=loaded.bg_rates, ard_state=loaded.ard_state, R_init=length(loaded.ard_state.active_mask))
 
 # 3. Fit MCMC across full session:
 # - Task Motifs 1..9 packets are frozen (cannot be split/pruned/drifted)

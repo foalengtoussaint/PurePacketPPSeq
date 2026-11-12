@@ -113,6 +113,7 @@ function initialize_scratch_model(
     data::SpikeDataset,
     motifs::Dict{Int, PurePacketMotif};
     bg_rates::Union{Nothing, Vector{Float64}}=nothing,
+    ard_state::Union{Nothing, ARDManifoldState}=nothing,
     R_max::Int=4,
     R_init::Union{Nothing, Int}=nothing,
     alpha_c::Float64=10.0,
@@ -152,11 +153,16 @@ function initialize_scratch_model(
     end
 
     # Setup ARD Manifold (alpha_prune = 6,500 s^-2) & Continuous OU Triad
-    ard_state = ARDManifoldState(R_current; a0=1e-3, b0=1.0e-6, prune_threshold=6500.0)
-    hyperstate = Level5Hyperstate(1, R_current, max(maximum(keys(motifs); init=1), 50); force_thresh=0.01)
+    ard_state_obj = if ard_state !== nothing
+        deepcopy(ard_state)
+    else
+        ARDManifoldState(R_current; a0=1e-3, b0=1.0e-6, prune_threshold=6500.0)
+    end
+    M_capacity = max(maximum(keys(motifs); init=1) + 150, 250)
+    hyperstate = Level5Hyperstate(1, R_current, M_capacity; force_thresh=0.01)
     ou_ctx = ContinuousOUContext(
         N_channels, T_total;
-        M_motifs=max(maximum(keys(motifs); init=1), 50),
+        M_motifs=M_capacity,
         cp_range=99:301,
         dt_net=0.05, tau_net=0.5, sigma_net=0.4,
         dt_cell=10.0, tau_cell=60.0, sigma_cell=0.15,
@@ -171,7 +177,7 @@ function initialize_scratch_model(
             length(motifs), N_spikes, mean(init_bg)))
     return PurePacketModel(
         motifs, occurrences, assign, init_bg, counts_bg,
-        ard_state, hyperstate, ou_ctx, audit,
+        ard_state_obj, hyperstate, ou_ctx, audit,
         R_max, N_channels, T_total,
         Float64[], Any[]
     )
