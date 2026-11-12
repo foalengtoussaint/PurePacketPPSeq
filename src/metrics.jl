@@ -60,13 +60,14 @@ function compute_time_rescaling_ks(
     spike_t::Vector{Float64},
     chan_to_spikes::Vector{Vector{Int}},
     bg_rates::Vector{Float64},
-    audit_channels::Vector{Int},
+    audit_channels::Union{Nothing, Vector{Int}},
     active_mask::BitVector;
     ou_ctx::Union{Nothing, ContinuousOUContext}=nothing
 )
+    channels_to_audit = audit_channels !== nothing ? audit_channels : collect(1:length(bg_rates))
     # Pre-gather active packet occurrences on each audit channel
     chan_instances = Dict{Int, Vector{AuditPacketInstance}}()
-    for k in audit_channels
+    for k in channels_to_audit
         insts = AuditPacketInstance[]
         for occ in values(occurrences)
             haskey(motifs, occ.motif) || continue
@@ -95,7 +96,7 @@ function compute_time_rescaling_ks(
 
     all_u = Float64[]
 
-    for k in audit_channels
+    for k in channels_to_audit
         spk_indices = chan_to_spikes[k]
         length(spk_indices) < 2 && continue
         

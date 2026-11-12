@@ -635,14 +635,16 @@ function fit!(
 
             # Periodic Time-Rescaling check and checkpoint persistence
             if sweep % checkpoint_interval == 0 || sweep == sweeps
+                # Unbiased global census across 100% of channels and spikes (Brown et al. 2002)
+                all_channels = collect(1:data.N_channels)
                 ks_res = compute_time_rescaling_ks(
                     model.motifs, model.occurrences, data.t, data.chan_to_spikes,
-                    model.bg_rates, model.audit.all_audit, model.ard_state.active_mask;
+                    model.bg_rates, all_channels, model.ard_state.active_mask;
                     ou_ctx=model.ou_ctx
                 )
                 push!(model.ks_history, (sweep = sweep, D_ks = ks_res.D_ks, D_95 = ks_res.D_95, is_valid = ks_res.is_valid, N = ks_res.N_intervals))
-                println(@sprintf("   --> [Audit Time-Rescaling] D_KS: %.5f | 95%% Envelope: %.5f (N=%d) | Status: %s",
-                        ks_res.D_ks, ks_res.D_95, ks_res.N_intervals, ks_res.is_valid ? "SATURATED (Inside 95% Envelope)" : "EXPLORING"))
+                println(@sprintf("   --> [Global Time-Rescaling Audit] D_KS: %.5f | 95%% Envelope: %.5f (N=%d across %d units) | Status: %s",
+                        ks_res.D_ks, ks_res.D_95, ks_res.N_intervals, data.N_channels, ks_res.is_valid ? "SATURATED (Inside 95% Envelope)" : "EXPLORING"))
 
                 if !isempty(checkpoint_path)
                     persist_checkpoint!(checkpoint_path, model)
