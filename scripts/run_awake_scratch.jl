@@ -14,6 +14,14 @@ motifs = load_seed_motifs()
 model = initialize_scratch_model(data, motifs; R_init=1)
 
 # 3. Fit MCMC with automated diagnostics, KS monitoring & checkpoints
+# Enable Level m=3 Dynamic Motif Birth and Death from scratch
 N_sweeps = length(ARGS) >= 1 ? parse(Int, ARGS[1]) : 50
 checkpoint = joinpath(@__DIR__, "checkpoint_pure_packet_scratch_$(N_sweeps)sweeps.jls")
-fit!(model, data; sweeps=N_sweeps, checkpoint_path=checkpoint)
+fit!(
+    model, data;
+    sweeps=N_sweeps,
+    checkpoint_path=checkpoint,
+    checkpoint_interval=5,
+    allow_motif_birth=true,
+    frozen_motif_ids=Set{Int}() # All motifs fully plastic with birth and death enabled
+)

@@ -406,8 +406,10 @@ function step_pure_packet_sweep!(
         end
     end
 
-    # 11b. Mechanism m=3: Prune Non-Frozen Dead Motifs (M -> M-1) with Zero Occurrences
-    pruned_mids = prune_dead_motifs!(motifs, occurrences, frozen_motif_ids)
+    # 11b. Mechanism m=3: Prune Non-Frozen Dead Motifs (M -> M-1) with Zero Occurrences (after burn-in)
+    if sweep >= 3
+        pruned_mids = prune_dead_motifs!(motifs, occurrences, frozen_motif_ids)
+    end
 
     # 12. Mechanism m=5 & m=0: Conjugate Triad Continuous Adaptation
     update_regional_ou!(ou_ctx, assign, spike_t, spike_neuron, bg_rates; max_iter=2)
