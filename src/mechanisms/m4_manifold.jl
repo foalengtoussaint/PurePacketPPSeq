@@ -370,7 +370,10 @@ function check_and_birth_axis!(
             for m in values(motifs)
                 P = length(m.packets)
                 new_W = zeros(Float64, state.R_max, P)
-                new_W[1:(state.R_max-1), :] .= m.W
+                n_copy = min(size(m.W, 1), state.R_max - 1)
+                if n_copy > 0
+                    @views new_W[1:n_copy, :] .= m.W[1:n_copy, :]
+                end
                 m.W = new_W
             end
             for occ in occurrences
@@ -392,7 +395,10 @@ function check_and_birth_axis!(
                 else
                     P = length(m.packets)
                     new_W = zeros(Float64, target_r, P)
-                    new_W[1:size(m.W, 1), :] .= m.W
+                    n_copy = min(size(m.W, 1), target_r)
+                    if n_copy > 0
+                        @views new_W[1:n_copy, :] .= m.W[1:n_copy, :]
+                    end
                     m.W = new_W
                 end
             end

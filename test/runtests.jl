@@ -1263,4 +1263,58 @@ end
         @test !haskey(motifs, 2)
         println("Level 3 Dynamic Pruning verified: Unfrozen Motif 2 cleanly pruned upon losing occurrences.")
     end
+
+    # -------------------------------------------------------------
+    # TEST 18: FULL END-TO-END MCMC SWEEP INTEGRATION (3 SWEEPS)
+    # -------------------------------------------------------------
+    @testset "Full End-to-End MCMC Sweep Integration (Fit Loop & Dimensional Growth)" begin
+        N_units = 20
+        T_dur = 30.0
+        spk_times = Float64[]
+        spk_chans = Int[]
+
+        # Background spikes
+        for c in 1:N_units
+            for t in 0.5:1.0:29.5
+                push!(spk_times, t + 0.005 * randn())
+                push!(spk_chans, c)
+            end
+        end
+
+        # Sequence occurrences of motif 1 at t=5.0, 15.0, 25.0
+        for tau in [5.0, 15.0, 25.0]
+            for (p, c) in enumerate([2, 5, 8, 12, 17])
+                push!(spk_times, tau + 0.03 * p)
+                push!(spk_chans, c)
+            end
+        end
+
+        # Dense unassigned burst to trigger motif birth at t=10.0
+        for (p, c) in enumerate([3, 6, 9, 14, 18])
+            push!(spk_times, 10.0 + 0.02 * p)
+            push!(spk_chans, c)
+        end
+
+        perm = sortperm(spk_times)
+        spk_times = spk_times[perm]
+        spk_chans = spk_chans[perm]
+
+        ds = SpikeDataset(spk_times, spk_chans; N_channels=N_units, T_total=T_dur)
+
+        # Initialize with 1 seed motif having R_init=1
+        pkts1 = [Packet(p, [2, 5, 8, 12, 17][p], 0.03 * p, 0.0002, 1.0) for p in 1:5]
+        init_m = Dict(1 => PurePacketMotif(1, pkts1, 1, N_units; W_window=0.5))
+        m_model = initialize_scratch_model(ds, init_m; R_init=1)
+
+        # Run 3 full MCMC sweeps end-to-end with dynamic motif birth enabled
+        fit!(m_model, ds; sweeps=3, checkpoint_interval=2, allow_motif_birth=true)
+
+        @test length(m_model.energy_history) == 3
+        @test all(isfinite, m_model.energy_history)
+        @test length(m_model.motifs) >= 1
+        for m in values(m_model.motifs)
+            @test size(m.W, 1) == length(m_model.ard_state.active_mask)
+        end
+        println("End-to-end MCMC sweeps (Sweeps 1-3) verified: 0 errors across dimensional growth & motif birth.")
+    end
 end

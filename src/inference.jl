@@ -123,6 +123,19 @@ function initialize_scratch_model(
     N_spikes = length(data.t)
     T_total = data.T_total
 
+    # Ensure all motifs have W dimension matching R_current
+    for m in values(motifs)
+        if size(m.W, 1) != R_current
+            P = length(m.packets)
+            new_W = zeros(Float64, R_current, P)
+            n_copy = min(size(m.W, 1), R_current)
+            if n_copy > 0
+                @views new_W[1:n_copy, :] .= m.W[1:n_copy, :]
+            end
+            m.W = new_W
+        end
+    end
+
     # Cold scratch state: 0 occurrences, all spikes assigned to background (0, 0)
     occurrences = Dict{Int, PureOccurrence}()
     assign = [SpikeAssignment(0, 0) for _ in 1:N_spikes]
