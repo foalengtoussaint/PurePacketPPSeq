@@ -230,6 +230,7 @@ function prune_dead_motifs!(
         if mid ∉ frozen_motif_ids && get(motif_occ_counts, mid, 0) == 0
             push!(dead_mids, mid)
             delete!(motifs, mid)
+            println(@sprintf("   --> [Level 3 Motif Pruned] Motif ID: %d (Zero Active Occurrences)", mid))
         end
     end
 
