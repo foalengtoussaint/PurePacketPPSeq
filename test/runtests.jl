@@ -1262,6 +1262,38 @@ end
         @test haskey(motifs, 1)
         @test !haskey(motifs, 2)
         println("Level 3 Dynamic Pruning verified: Unfrozen Motif 2 cleanly pruned upon losing occurrences.")
+
+        # Case C: Symmetric Joint Singleton Death (m, e) -> ∅
+        # Create a singleton motif whose occurrence cannot pay its P-packet Occam tax
+        p_noise = [Packet(p, p, 0.02 * p, 0.0002, 1.0) for p in 1:10]
+        m4 = PurePacketMotif(4, p_noise, R_max, N_chans; W_window=0.40)
+        motifs[4] = m4
+        occ4 = PureOccurrence(4, 4, 10.0, R_max, 10; amplitude=1.0)
+        # Assign dummy spikes with huge dt variance so evidence is very low / negative
+        test_assign = [SpikeAssignment(0, 0) for _ in 1:100]
+        test_spike_t = fill(0.0, 100)
+        test_spike_neuron = fill(1, 100)
+        for p in 1:10
+            test_assign[p] = SpikeAssignment(4, p)
+            test_spike_neuron[p] = p
+            test_spike_t[p] = 10.0 + 0.15 # 150ms off template latency (huge residual)
+            push!(occ4.members, p)
+            occ4.counts[p] = 1
+        end
+        occurrences[4] = occ4
+
+        # Run prune_dead_motifs! with full RJMCMC reverse jump enabled
+        dead_ids_c = prune_dead_motifs!(
+            motifs, occurrences, Set{Int}();
+            spike_t=test_spike_t, spike_neuron=test_spike_neuron, assign=test_assign,
+            bg_rates=bg_rates, counts_bg=zeros(Int, N_chans), active_mask=trues(R_max),
+            rng=Random.MersenneTwister(42)
+        )
+        @test 4 in dead_ids_c
+        @test !haskey(motifs, 4)
+        @test !haskey(occurrences, 4)
+        @test all(test_assign[p].event_id == 0 for p in 1:10)
+        println("Level 3 Symmetric Joint Singleton Death verified: Sub-marginal noise singleton motif cleanly pruned and spikes released to background.")
     end
 
     # -------------------------------------------------------------

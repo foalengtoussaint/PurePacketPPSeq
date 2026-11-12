@@ -100,7 +100,11 @@ function detect_and_birth_new_motifs!(
     min_channels::Int=5,
     min_spikes::Int=8,
     K_candidates::Int=30,
-    occam_motif::Float64=20.0,
+    occam_motif::Union{Float64, Nothing}=nothing,
+    gamma_motif::Float64=100.0,
+    alpha_a::Float64=1.0,
+    beta_a::Float64=1.0,
+    counts_bg::Union{Vector{Int}, Nothing}=nothing,
     rng::AbstractRNG=Random.default_rng()
 )::Int
     N_spikes = length(spike_t)
@@ -174,7 +178,15 @@ function detect_and_birth_new_motifs!(
             llr += log(max(ratio, 1.0))
         end
 
-        if llr > occam_motif
+        # Exact P_new-Packet Occam Volume Tax + CRP Motif Table Prior:
+        # Tax_Occam = ln(E / gamma_motif) + \sum_{p=1}^{P_new} [ ln(|S_m| / (sqrt(2pi)*sigma_prior)) + ln(beta_a + 1) ]
+        P_new = length(sorted_chans)
+        tax_crp = log(max(1.0, Float64(length(occurrences))) / max(1e-6, gamma_motif))
+        tax_per_pkt = log(W_window / (sqrt(2π) * sigma_prior)) + log(beta_a + 1.0)
+        tax_occam = max(0.0, tax_crp) + P_new * tax_per_pkt
+        threshold = occam_motif !== nothing ? occam_motif : tax_occam
+
+        if llr > threshold
             new_mid = maximum(keys(motifs); init=0) + 1
             new_motif = PurePacketMotif(new_mid, pkts, R_current, N_channels; W_window=W_window)
             project_translational_gauge!(new_motif, trues(R_current))
@@ -192,11 +204,14 @@ function detect_and_birth_new_motifs!(
                 new_occ.counts[p] = 1
                 new_occ.sum_t[p] = spike_t[s_idx]
                 new_occ.sum_t2[p] = spike_t[s_idx]^2
+                if counts_bg !== nothing
+                    counts_bg[c] = max(0, counts_bg[c] - 1)
+                end
             end
             occurrences[next_eid] = new_occ
             n_motifs_birthed += 1
             println(@sprintf("   --> [Level 3 Motif Birthed] Motif ID: %d | Packets: %d across %d units | Onset: %.2fs (LLR: %.1f > Tax: %.1f)",
-                    new_mid, length(pkts), length(sorted_chans), tau_new, llr, occam_motif))
+                    new_mid, length(pkts), length(sorted_chans), tau_new, llr, threshold))
             break
         end
     end
@@ -208,29 +223,127 @@ end
     prune_dead_motifs!(
         motifs::Dict{Int, PurePacketMotif},
         occurrences::Dict{Int, PureOccurrence},
-        frozen_motif_ids::Set{Int}=Set{Int}()
+        frozen_motif_ids::Set{Int}=Set{Int}();
+        spike_t::Union{Vector{Float64}, Nothing}=nothing,
+        spike_neuron::Union{Vector{Int}, Nothing}=nothing,
+        assign::Union{Vector{SpikeAssignment}, Nothing}=nothing,
+        bg_rates::Union{Vector{Float64}, Nothing}=nothing,
+        counts_bg::Union{Vector{Int}, Nothing}=nothing,
+        active_mask::Union{BitVector, Nothing}=nothing,
+        gamma_motif::Float64=100.0,
+        alpha_c::Float64=10.0,
+        beta_c::Float64=10.0,
+        beta_a::Float64=1.0,
+        sigma_prior::Float64=0.015,
+        rng::AbstractRNG=Random.default_rng()
     )::Vector{Int}
 
-Identifies and deletes any non-frozen motif whose active occurrence count has dropped to 0 (M -> M-1).
-Motifs in `frozen_motif_ids` (e.g. task motifs 1..9) are strictly protected and never deleted.
+Identifies and deletes non-frozen motifs using reversible-jump detailed balance:
+1. Dead motifs with 0 active occurrences (E_m == 0) are unconditionally pruned.
+2. Singleton motifs with 1 active occurrence (E_m == 1) undergo the symmetric joint
+   motif death move (m, e) -> ∅. If the occurrence's marginal log-evidence cannot pay
+   the P_m-packet continuous parameter Occam volume tax plus CRP motif prior:
+       Δln Post = Δln M(e) - Tax_Occam(m)
+   the joint jump is accepted with MH probability min(1, exp(-Δln Post) * (q_birth / q_death)),
+   releasing all assigned spikes back to background.
+Motifs in `frozen_motif_ids` are strictly protected and never deleted.
 Returns the vector of pruned motif IDs.
 """
 function prune_dead_motifs!(
     motifs::Dict{Int, PurePacketMotif},
     occurrences::Dict{Int, PureOccurrence},
-    frozen_motif_ids::Set{Int}=Set{Int}()
+    frozen_motif_ids::Set{Int}=Set{Int}();
+    spike_t::Union{Vector{Float64}, Nothing}=nothing,
+    spike_neuron::Union{Vector{Int}, Nothing}=nothing,
+    assign::Union{Vector{SpikeAssignment}, Nothing}=nothing,
+    bg_rates::Union{Vector{Float64}, Nothing}=nothing,
+    counts_bg::Union{Vector{Int}, Nothing}=nothing,
+    active_mask::Union{BitVector, Nothing}=nothing,
+    gamma_motif::Float64=100.0,
+    alpha_c::Float64=10.0,
+    beta_c::Float64=10.0,
+    beta_a::Float64=1.0,
+    sigma_prior::Float64=0.015,
+    rng::AbstractRNG=Random.default_rng()
 )::Vector{Int}
-    motif_occ_counts = Dict{Int, Int}()
+    # 1. Map each motif to its list of active occurrences
+    motif_occs = Dict{Int, Vector{PureOccurrence}}()
     for occ in values(occurrences)
-        motif_occ_counts[occ.motif] = get(motif_occ_counts, occ.motif, 0) + 1
+        push!(get!(motif_occs, occ.motif, PureOccurrence[]), occ)
     end
 
     dead_mids = Int[]
+
+    # 2. Phase 1: Unconditional pruning of motifs with E_m == 0
     for mid in collect(keys(motifs))
-        if mid ∉ frozen_motif_ids && get(motif_occ_counts, mid, 0) == 0
+        mid in frozen_motif_ids && continue
+        occs = get(motif_occs, mid, PureOccurrence[])
+        if isempty(occs)
             push!(dead_mids, mid)
             delete!(motifs, mid)
             println(@sprintf("   --> [Level 3 Motif Pruned] Motif ID: %d (Zero Active Occurrences)", mid))
+        end
+    end
+
+    # 3. Phase 2: Symmetric Joint Motif Death Jump (m, e) -> ∅ for Singletons (E_m == 1)
+    if assign !== nothing && spike_t !== nothing && bg_rates !== nothing
+        n_bg_spikes = count(a -> a.event_id == 0, assign)
+        singleton_mids = [
+            mid for mid in keys(motifs)
+            if mid ∉ frozen_motif_ids && length(get(motif_occs, mid, PureOccurrence[])) == 1
+        ]
+        n_singletons = length(singleton_mids)
+
+        if n_singletons > 0 && n_bg_spikes > 0
+            # Proposal ratio: q(birth) / q(death) = (1 / n_bg_spikes) / (1 / n_singletons)
+            #                                     = n_singletons / n_bg_spikes
+            log_q_ratio = log(Float64(n_singletons) / Float64(n_bg_spikes))
+            E_total = length(occurrences)
+
+            for mid in singleton_mids
+                !haskey(motifs, mid) && continue
+                m = motifs[mid]
+                occ = motif_occs[mid][1]
+                !haskey(occurrences, occ.id) && continue
+
+                P_m = length(m.packets)
+                W_eff = max(m.delta_right - m.delta_left, 0.10)
+                tax_crp = log(max(1.0, Float64(E_total)) / max(1e-6, gamma_motif))
+                tax_per_pkt = log(W_eff / (sqrt(2π) * sigma_prior)) + log(beta_a + 1.0)
+                tax_occam = max(0.0, tax_crp) + P_m * tax_per_pkt
+
+                mask = active_mask !== nothing ? active_mask : trues(size(m.W, 1))
+                delta_ln_M = calc_marginal_log_evidence(
+                    m, occ.counts, occ.members, occ.tau, occ.u,
+                    spike_t, assign, bg_rates, mask;
+                    alpha_c=alpha_c, beta_c=beta_c
+                )
+
+                # MH acceptance for reverse jump (m, e) -> ∅:
+                # Δln Post = Δln M(e) - Tax_Occam(m)
+                # ln α_death = min(0, -Δln Post + ln(q_birth / q_death))
+                #            = min(0, (Tax_Occam - Δln M) + log_q_ratio)
+                delta_post = delta_ln_M - tax_occam
+                log_alpha = min(0.0, -delta_post + log_q_ratio)
+
+                if log(rand(rng)) < log_alpha
+                    # Accept symmetric death jump: release spikes and delete both e and m
+                    for s_idx in occ.members
+                        assign[s_idx] = SpikeAssignment(0, 0)
+                        if counts_bg !== nothing && spike_neuron !== nothing
+                            c = spike_neuron[s_idx]
+                            if 1 <= c <= length(counts_bg)
+                                counts_bg[c] += 1
+                            end
+                        end
+                    end
+                    delete!(occurrences, occ.id)
+                    delete!(motifs, mid)
+                    push!(dead_mids, mid)
+                    println(@sprintf("   --> [Level 3 Motif Pruned] Motif ID: %d (Singleton Occam Death: Ev %.1f < Tax %.1f | ΔPost: %+.1f)",
+                            mid, delta_ln_M, tax_occam, delta_post))
+                end
+            end
         end
     end
 

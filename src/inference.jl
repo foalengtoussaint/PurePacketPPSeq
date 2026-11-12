@@ -304,6 +304,8 @@ function step_pure_packet_sweep!(
     gamma_m::Float64=100.0,
     alpha_c::Float64=10.0,
     beta_c::Float64=10.0,
+    alpha_a::Float64=1.0,
+    beta_a::Float64=1.0,
     delta_margin::Float64=3.0,
     frozen_motif_ids::Set{Int}=Set{Int}(),
     allow_motif_birth::Bool=false,
@@ -334,7 +336,8 @@ function step_pure_packet_sweep!(
         n_motifs_birthed = detect_and_birth_new_motifs!(
             motifs, occurrences, assign, spike_t, spike_neuron,
             bg_rates, T_total, length(ard_state.active_mask);
-            N_channels=N_channels, occam_motif=20.0, rng=rng
+            N_channels=N_channels, occam_motif=nothing, gamma_motif=gamma_m,
+            alpha_a=alpha_a, beta_a=beta_a, counts_bg=counts_bg, rng=rng
         )
     end
 
@@ -443,12 +446,18 @@ function step_pure_packet_sweep!(
         sample_packet_masses!(pm, occ_list; alpha_a=1.0, beta_a=1.0, rng=rng)
     end
 
-    # 10. Mechanism m=1 & m=3: Nonparametric Pruning with Anchor Handover
+    # 10. Mechanism m=1: Reversible-Jump Pruning of Inactive Packets (Detailed Balance Reverse Jump)
     for (mid, pm) in motifs
         mid in frozen_motif_ids && continue
         occ_list = [occ for occ in values(occurrences) if occ.motif == mid]
         isempty(occ_list) && continue
-        prune_dead_packets!(pm, occ_list, bg_rates, N_channels; assign=assign, occam_tax=2.0)
+        prune_dead_packets!(
+            pm, occ_list, bg_rates, N_channels;
+            spike_t=spike_t, spike_chan=spike_neuron, assign=assign,
+            ou_ctx=ou_ctx, active_mask=ard_state.active_mask, ard_alphas=ard_state.alpha,
+            sigma_prior=0.015, alpha_a=alpha_a, beta_a=beta_a,
+            counts_bg=counts_bg, rng=rng
+        )
         project_translational_gauge!(pm, ard_state.active_mask)
     end
 
@@ -460,16 +469,23 @@ function step_pure_packet_sweep!(
             isempty(occ_list) && continue
             detect_and_birth_or_split_packets!(
                 pm, occ_list, spike_t, spike_neuron, assign, bg_rates, N_channels;
-                chan_spikes=chan_to_spikes, sigma_prior=0.015, alpha_a=1.0, beta_a=1.0,
+                chan_spikes=chan_to_spikes, ou_ctx=ou_ctx, sigma_prior=0.015,
+                alpha_a=alpha_a, beta_a=beta_a,
                 active_mask=ard_state.active_mask, ard_alphas=ard_state.alpha
             )
             project_translational_gauge!(pm, ard_state.active_mask)
         end
     end
 
-    # 11b. Mechanism m=3: Prune Non-Frozen Dead Motifs (M -> M-1) with Zero Occurrences (after burn-in)
+    # 11b. Mechanism m=3: Reversible-Jump Pruning of Dead & Sub-Marginal Singleton Motifs
     if sweep >= 3
-        pruned_mids = prune_dead_motifs!(motifs, occurrences, frozen_motif_ids)
+        pruned_mids = prune_dead_motifs!(
+            motifs, occurrences, frozen_motif_ids;
+            spike_t=spike_t, spike_neuron=spike_neuron, assign=assign,
+            bg_rates=bg_rates, counts_bg=counts_bg, active_mask=ard_state.active_mask,
+            gamma_motif=gamma_m, alpha_c=alpha_c, beta_c=beta_c, beta_a=beta_a,
+            sigma_prior=0.015, rng=rng
+        )
     end
 
     # 12. Mechanism m=5 & m=0: Conjugate Triad Continuous Adaptation
@@ -541,6 +557,8 @@ function step_pure_packet_sweep!(
     gamma_m::Float64=100.0,
     alpha_c::Float64=10.0,
     beta_c::Float64=10.0,
+    alpha_a::Float64=1.0,
+    beta_a::Float64=1.0,
     delta_margin::Float64=3.0,
     frozen_motif_ids::Set{Int}=Set{Int}(),
     allow_motif_birth::Bool=false,
