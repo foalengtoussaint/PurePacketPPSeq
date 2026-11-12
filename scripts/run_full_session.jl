@@ -23,7 +23,23 @@ loaded = load_checkpoint_motifs(ck_path; N_channels=411)
 # 2. Initialize model across full session using learned Phase 1 background rates & dynamic manifold
 model = initialize_scratch_model(data, loaded.motifs; bg_rates=loaded.bg_rates, R_init=length(loaded.ard_state.active_mask))
 
-# 3. Fit MCMC across full session
+# 3. Fit MCMC across full session:
+# - Task Motifs 1..9 packets are frozen (cannot be split/pruned/drifted)
+# - Task Motifs 1..9 loadings W remain warm/adaptive
+# - Task Motifs 1..9 are protected from motif death
+# - Dynamic motif birth (M -> M+1) is enabled for discovering new non-task motifs
+# - Empty non-task motifs (M -> M-1) are pruned
+frozen_task_motifs = Set(keys(loaded.motifs))
+println("Active Task Motifs Frozen: ", sort(collect(frozen_task_motifs)))
+println("Dynamic Motif Birth: ENABLED")
+
 N_sweeps = length(ARGS) >= 1 ? parse(Int, ARGS[1]) : 200
 checkpoint = joinpath(@__DIR__, "checkpoint_pure_packet_full_session_$(N_sweeps)sweeps.jls")
-fit!(model, data; sweeps=N_sweeps, checkpoint_path=checkpoint, checkpoint_interval=10)
+fit!(
+    model, data;
+    sweeps=N_sweeps,
+    checkpoint_path=checkpoint,
+    checkpoint_interval=10,
+    frozen_motif_ids=frozen_task_motifs,
+    allow_motif_birth=true
+)

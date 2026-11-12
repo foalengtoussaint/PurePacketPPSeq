@@ -1145,4 +1145,122 @@ end
 
         println("Scale-dispatched point process intensity verified across Scale n=0 and Scale n=1.")
     end
+
+    # -------------------------------------------------------------
+    # TEST 17: LEVEL m=3 MOTIF ARCHETYPE LIFE CYCLE (BIRTH & DEATH)
+    # -------------------------------------------------------------
+    @testset "Level m=3 Motif Archetype Life Cycle (Birth, Death, Frozen Immunity)" begin
+        # 1. Mechanism Class Hierarchy & Backward Compatibility
+        @test Level3MotifArchetype <: AbstractMechanism
+        @test Level3MotifDictionary === Level3MotifArchetype
+        @test MotifArchetype === Level3MotifArchetype
+        @test MotifDictionary === Level3MotifArchetype
+        @test Level3GaugeSymmetry === Level3MotifArchetype
+        @test GaugeSymmetry === Level3MotifArchetype
+
+        # 2. Nonparametric Data-Driven Motif Birth (M -> M+1)
+        N_chans = 10
+        T_total = 10.0
+        bg_rates = fill(1.0, N_chans)
+        R_max = 2
+
+        # Initialize with 1 existing motif
+        p0 = Packet(1, 1, 0.0, 0.0002, 1.0)
+        m1 = PurePacketMotif(1, [p0], R_max, N_chans; W_window=0.50)
+        motifs = Dict{Int, PurePacketMotif}(1 => m1)
+        occurrences = Dict{Int, PureOccurrence}()
+
+        # Generate spike dataset with a dense unassigned synchronous burst across 6 channels at t in [3.0, 3.2]s
+        spike_times = Float64[]
+        spike_chans = Int[]
+
+        # Background noise spikes (widely staggered so individual units never cluster)
+        for c in 1:N_chans
+            for t_bg in [0.2 * c, 4.0 + 0.4 * c, 7.0 + 0.3 * c]
+                push!(spike_times, t_bg)
+                push!(spike_chans, c)
+            end
+        end
+
+        # Structured sequence burst (channels 2, 4, 6, 7, 8, 10)
+        burst_chans = [2, 4, 6, 7, 8, 10]
+        burst_offsets = [0.00, 0.03, 0.06, 0.09, 0.12, 0.15]
+        for (c, dt) in zip(burst_chans, burst_offsets)
+            push!(spike_times, 3.00 + dt)
+            push!(spike_chans, c)
+        end
+
+        # Sort spikes chronologically
+        sort_idx = sortperm(spike_times)
+        spike_times = spike_times[sort_idx]
+        spike_chans = spike_chans[sort_idx]
+        assign = [SpikeAssignment(0, 0) for _ in 1:length(spike_times)]
+
+        # Run motif birth detector
+        rng = Random.MersenneTwister(42)
+        n_birthed = detect_and_birth_new_motifs!(
+            motifs, occurrences, assign, spike_times, spike_chans,
+            bg_rates, T_total, R_max;
+            N_channels=N_chans, W_window=0.30, min_channels=4, min_spikes=5,
+            K_candidates=50, occam_motif=15.0, rng=rng
+        )
+
+        @test n_birthed == 1
+        @test haskey(motifs, 2)
+        @test length(motifs) == 2
+
+        # Verify newly birthed motif properties
+        m2 = motifs[2]
+        @test length(m2.packets) == 6
+        @test [p.channel for p in m2.packets] == burst_chans
+        @test isapprox(m2.packets[1].mu, 0.0, atol=1e-6)
+        @test isapprox(m2.packets[2].mu, 0.03, atol=1e-3)
+        @test isapprox(m2.packets[6].mu, 0.15, atol=1e-3)
+
+        # Verify translational gauge symmetry holds exactly on new motif
+        @test compute_gauge_error(m2, trues(R_max)) < 1e-12
+
+        # Verify initial occurrence was created and assigned
+        @test length(occurrences) == 1
+        new_occ = first(values(occurrences))
+        @test new_occ.motif == 2
+        @test isapprox(new_occ.tau, 3.00, atol=1e-3)
+        @test length(new_occ.members) == 6
+        @test all(assign[s_idx].event_id == new_occ.id for s_idx in new_occ.members)
+        println(@sprintf("Level 3 Motif Birth verified: M -> %d | New Motif has %d packets on %d channels.",
+                length(motifs), length(m2.packets), length(burst_chans)))
+
+        # 3. Occam Motif Death & Frozen Motif Immunity
+        # Setup: Motif 1 (active with 1 occ), Motif 2 (now delete its occ -> 0 occ), Motif 3 (0 occ)
+        empty!(occurrences)
+        # Create an occurrence for Motif 1 only
+        occ1 = PureOccurrence(1, 1, 1.0, R_max, 1; amplitude=1.0)
+        occurrences[1] = occ1
+
+        # Add a dummy Motif 3
+        p3 = Packet(1, 3, 0.0, 0.0002, 1.0)
+        motifs[3] = PurePacketMotif(3, [p3], R_max, N_chans; W_window=0.50)
+
+        # Motifs at this point:
+        # Motif 1: 1 occurrence
+        # Motif 2: 0 occurrences
+        # Motif 3: 0 occurrences
+        # Case A: Motif 2 is frozen, Motif 3 is dynamic (unfrozen)
+        frozen_ids = Set([1, 2])
+        dead_ids = prune_dead_motifs!(motifs, occurrences, frozen_ids)
+
+        @test dead_ids == [3]
+        @test haskey(motifs, 1) # Retained (has occurrence)
+        @test haskey(motifs, 2) # Retained (frozen immunity despite 0 occurrences)
+        @test !haskey(motifs, 3) # Pruned (unfrozen and 0 occurrences)
+        println("Level 3 Motif Death & Frozen Immunity verified: Motif 3 pruned, Frozen Motif 2 protected.")
+
+        # Case B: Unfreezing Motif 2 allows it to be pruned
+        empty!(frozen_ids)
+        dead_ids_b = prune_dead_motifs!(motifs, occurrences, frozen_ids)
+        @test dead_ids_b == [2]
+        @test haskey(motifs, 1)
+        @test !haskey(motifs, 2)
+        println("Level 3 Dynamic Pruning verified: Unfrozen Motif 2 cleanly pruned upon losing occurrences.")
+    end
 end

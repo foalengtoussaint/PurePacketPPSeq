@@ -13,7 +13,7 @@ include("types.jl")
 include("mechanisms/m0_floor.jl")
 include("mechanisms/m1_packet.jl")
 include("mechanisms/m2_carrier.jl")
-include("mechanisms/m3_gauge.jl")
+include("mechanisms/m3_motif.jl")
 include("mechanisms/m4_manifold.jl")
 include("mechanisms/m5_ou.jl")
 include("scales.jl")
@@ -43,12 +43,16 @@ export
     Level0RateFloor,
     Level1EmissionPacket,
     Level2CarrierComposition,
+    Level3MotifArchetype,
+    Level3MotifDictionary,
     Level3GaugeSymmetry,
     Level4KinematicManifold,
     Level5ContinuousOU,
     RateFloor,
     EmissionPacketMechanism,
     CarrierComposition,
+    MotifArchetype,
+    MotifDictionary,
     GaugeSymmetry,
     KinematicManifold,
     ContinuousOU,
@@ -86,9 +90,11 @@ export
     rebuild_inverted_index!,
     update_chan_to_motifs,
 
-    # Mechanism m=3: Gauge Invariance
+    # Mechanism m=3: Motif Archetype, Birth/Death & Gauge Invariance
     project_translational_gauge!,
     compute_gauge_error,
+    detect_and_birth_new_motifs!,
+    prune_dead_motifs!,
 
     # Mechanism m=4: Kinematic Manifold & ARD
     sample_packet_loadings!,

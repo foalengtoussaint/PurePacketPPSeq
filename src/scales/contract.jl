@@ -45,12 +45,23 @@ Composes packets into sequence carriers with bounding envelopes [delta_left, del
 struct Level2CarrierComposition <: AbstractMechanism end
 
 """
-    Level3GaugeSymmetry <: AbstractMechanism
+    Level3MotifArchetype <: AbstractMechanism
 
-Mechanism m = 3: Continuous Translational Gauge Invariance.
-Strictly projects loadings W onto orthogonal subspace: sum_p kappa_p W_{r,p} == 0.
+Mechanism m = 3: Motif Archetype Dictionary, Loadings & Amplitude Dynamics.
+Governs the sequence archetype dictionary M = {m_1, ..., m_M}:
+1. Motif Dictionary Life Cycle: Data-driven RJMCMC motif birth (M -> M+1) and Occam motif death (M -> M-1).
+2. Packet-to-Dimension Kinematic Loadings: Matrix W in R^{R x P_m} relating emission packets
+   to latent manifold axes, subject to translational gauge symmetry sum_p kappa_p W_{r,p} == 0.
+3. Time-Varying Occurrence Amplitudes: Motor vigor scaling c_e ~ Gamma(alpha_c, beta_c).
 """
-struct Level3GaugeSymmetry <: AbstractMechanism end
+struct Level3MotifArchetype <: AbstractMechanism end
+
+# Semantic & Backward-Compatible Aliases
+const Level3MotifDictionary = Level3MotifArchetype
+const MotifArchetype = Level3MotifArchetype
+const MotifDictionary = Level3MotifArchetype
+const Level3GaugeSymmetry = Level3MotifArchetype
+const GaugeSymmetry = Level3MotifArchetype
 
 """
     Level4KinematicManifold <: AbstractMechanism

@@ -114,9 +114,11 @@ function initialize_scratch_model(
     motifs::Dict{Int, PurePacketMotif};
     bg_rates::Union{Nothing, Vector{Float64}}=nothing,
     R_max::Int=4,
+    R_init::Union{Nothing, Int}=nothing,
     alpha_c::Float64=10.0,
     nu_student::Float64=4.0
 )::PurePacketModel
+    R_current = R_init !== nothing ? R_init : R_max
     N_channels = data.N_channels
     N_spikes = length(data.t)
     T_total = data.T_total
@@ -137,8 +139,8 @@ function initialize_scratch_model(
     end
 
     # Setup ARD Manifold (alpha_prune = 6,500 s^-2) & Continuous OU Triad
-    ard_state = ARDManifoldState(R_max; a0=1e-3, b0=1.0e-6, prune_threshold=6500.0)
-    hyperstate = Level5Hyperstate(1, R_max, max(maximum(keys(motifs); init=1), 50); force_thresh=0.01)
+    ard_state = ARDManifoldState(R_current; a0=1e-3, b0=1.0e-6, prune_threshold=6500.0)
+    hyperstate = Level5Hyperstate(1, R_current, max(maximum(keys(motifs); init=1), 50); force_thresh=0.01)
     ou_ctx = ContinuousOUContext(
         N_channels, T_total;
         M_motifs=max(maximum(keys(motifs); init=1), 50),
@@ -242,6 +244,8 @@ function step_pure_packet_sweep!(
     alpha_c::Float64=10.0,
     beta_c::Float64=10.0,
     delta_margin::Float64=3.0,
+    frozen_motif_ids::Set{Int}=Set{Int}(),
+    allow_motif_birth::Bool=false,
     rng::AbstractRNG=Random.default_rng()
 )
     N_channels = length(bg_rates)
@@ -262,6 +266,16 @@ function step_pure_packet_sweep!(
         alpha_c=alpha_c, beta_c=beta_c, gamma_m=gamma_m
     )
     n_pruned = length(pruned_occ_ids)
+
+    # 2b. Mechanism m=3: Dynamic Motif Archetype Birth (M -> M+1) from Background Spikes
+    n_motifs_birthed = 0
+    if allow_motif_birth && sweep >= 2
+        n_motifs_birthed = detect_and_birth_new_motifs!(
+            motifs, occurrences, assign, spike_t, spike_neuron,
+            bg_rates, T_total, length(ard_state.active_mask);
+            N_channels=N_channels, occam_motif=20.0, rng=rng
+        )
+    end
 
     # 3. Sampler: Channel-First Routed Dual-Index Spike Resampling (Multi-threaded)
     chan_to_motifs = update_chan_to_motifs(motifs, N_channels)
@@ -353,6 +367,7 @@ function step_pure_packet_sweep!(
 
     # 8. Mechanism m=1 & m=3: Corridor Latencies mu_p & Jitter var_p with Origin Anchor
     for (mid, pm) in motifs
+        mid in frozen_motif_ids && continue
         occ_list = [occ for occ in values(occurrences) if occ.motif == mid]
         isempty(occ_list) && continue
         update_packet_corridors!(pm, occ_list, ard_state.active_mask; anchor_origin=true, damp=0.2)
@@ -361,6 +376,7 @@ function step_pure_packet_sweep!(
 
     # 9. Mechanism m=1: Packet Masses a_{m,p} (Conjugate Gamma)
     for (mid, pm) in motifs
+        mid in frozen_motif_ids && continue
         occ_list = [occ for occ in values(occurrences) if occ.motif == mid]
         isempty(occ_list) && continue
         sample_packet_masses!(pm, occ_list; alpha_a=1.0, beta_a=1.0, rng=rng)
@@ -368,6 +384,7 @@ function step_pure_packet_sweep!(
 
     # 10. Mechanism m=1 & m=3: Nonparametric Pruning with Anchor Handover
     for (mid, pm) in motifs
+        mid in frozen_motif_ids && continue
         occ_list = [occ for occ in values(occurrences) if occ.motif == mid]
         isempty(occ_list) && continue
         prune_dead_packets!(pm, occ_list, bg_rates, N_channels; assign=assign, occam_tax=2.0)
@@ -377,6 +394,7 @@ function step_pure_packet_sweep!(
     # 11. Mechanism m=1 & m=3: Nonparametric Continuous Bayes Factor Birth & Split
     if sweep >= 2
         for (mid, pm) in motifs
+            mid in frozen_motif_ids && continue
             occ_list = [occ for occ in values(occurrences) if occ.motif == mid]
             isempty(occ_list) && continue
             detect_and_birth_or_split_packets!(
@@ -387,6 +405,9 @@ function step_pure_packet_sweep!(
             project_translational_gauge!(pm, ard_state.active_mask)
         end
     end
+
+    # 11b. Mechanism m=3: Prune Non-Frozen Dead Motifs (M -> M-1) with Zero Occurrences
+    pruned_mids = prune_dead_motifs!(motifs, occurrences, frozen_motif_ids)
 
     # 12. Mechanism m=5 & m=0: Conjugate Triad Continuous Adaptation
     update_regional_ou!(ou_ctx, assign, spike_t, spike_neuron, bg_rates; max_iter=2)
@@ -441,6 +462,8 @@ end
         alpha_c::Float64=10.0,
         beta_c::Float64=10.0,
         delta_margin::Float64=3.0,
+        frozen_motif_ids::Set{Int}=Set{Int}(),
+        allow_motif_birth::Bool=false,
         rng::AbstractRNG=Random.default_rng()
     ) -> (n_birthed::Int, n_overwritten::Int, n_pruned::Int)
 
@@ -456,6 +479,8 @@ function step_pure_packet_sweep!(
     alpha_c::Float64=10.0,
     beta_c::Float64=10.0,
     delta_margin::Float64=3.0,
+    frozen_motif_ids::Set{Int}=Set{Int}(),
+    allow_motif_birth::Bool=false,
     rng::AbstractRNG=Random.default_rng()
 )
     t_bufs = thread_bufs !== nothing ? thread_bufs : allocate_thread_buffers(Threads.maxthreadid(); rng=rng)
@@ -469,6 +494,7 @@ function step_pure_packet_sweep!(
         t_bufs.tl_occ, t_bufs.tl_pkt, t_bufs.tl_logw, t_bufs.tl_rng;
         bg_times=b_bufs.bg_times, bg_indices=b_bufs.bg_indices,
         gamma_m=gamma_m, alpha_c=alpha_c, beta_c=beta_c, delta_margin=delta_margin,
+        frozen_motif_ids=frozen_motif_ids, allow_motif_birth=allow_motif_birth,
         rng=rng
     )
 end
@@ -480,6 +506,8 @@ end
         sweeps::Int=50,
         checkpoint_path::String="",
         checkpoint_interval::Int=5,
+        frozen_motif_ids::Set{Int}=Set{Int}(),
+        allow_motif_birth::Bool=false,
         rng::AbstractRNG=Random.default_rng()
     )
 
@@ -496,6 +524,8 @@ function fit!(
     sweeps::Int=50,
     checkpoint_path::String="",
     checkpoint_interval::Int=5,
+    frozen_motif_ids::Set{Int}=Set{Int}(),
+    allow_motif_birth::Bool=false,
     rng::AbstractRNG=Random.default_rng()
 )
     # Pre-allocate sweep buffers
@@ -517,6 +547,7 @@ function fit!(
                 data.T_total, model.R_max,
                 thread_bufs.tl_occ, thread_bufs.tl_pkt, thread_bufs.tl_logw, thread_bufs.tl_rng;
                 bg_times=birth_bufs.bg_times, bg_indices=birth_bufs.bg_indices,
+                frozen_motif_ids=frozen_motif_ids, allow_motif_birth=allow_motif_birth,
                 rng=rng
             )
 
