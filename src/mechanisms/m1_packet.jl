@@ -193,11 +193,14 @@ function prune_dead_packets!(
         # 1. Survivor Support Envelope: S_m(P_m \ {p})
         min_surv_mu = minimum(m.packets[q].mu for q in survivors_tentative)
         max_surv_mu = maximum(m.packets[q].mu for q in survivors_tentative)
-        sigma_bar = mean(sqrt(m.packets[q].var) for q in survivors_tentative)
-        delta_reach = max(3.0 * sigma_bar, 0.25)
+        delta_reach = max(3.0 * sigma_prior, 0.25)
         surv_left = minimum(m.packets[q].mu - 4.0 * sqrt(m.packets[q].var) for q in survivors_tentative) - delta_reach
         surv_right = maximum(m.packets[q].mu + 4.0 * sqrt(m.packets[q].var) for q in survivors_tentative) + delta_reach
         proposal_support = max(surv_right - surv_left, 2.0 * delta_reach)
+
+        curr_left = minimum(m.packets[q].mu - 4.0 * sqrt(m.packets[q].var) for q in 1:P) - delta_reach
+        curr_right = maximum(m.packets[q].mu + 4.0 * sqrt(m.packets[q].var) for q in 1:P) + delta_reach
+        proposal_support_curr = max(curr_right - curr_left, 2.0 * delta_reach)
 
         # 2. Single-Step Reversibility Guard:
         # If mu_p is outside surv_left..surv_right, a single birth proposal on the survivors
@@ -212,7 +215,7 @@ function prune_dead_packets!(
             continue
         end
 
-        # 3. Continuous Parameter Occam Volume Tax on Survivor Support
+        # 3. Continuous Parameter Occam Volume Tax on Survivor Support with Contraction Bonus
         tax_loadings = 0.0
         if active_mask !== nothing && ard_alphas !== nothing
             for r in 1:min(length(active_mask), length(ard_alphas))
@@ -222,7 +225,12 @@ function prune_dead_packets!(
                 end
             end
         end
-        tax_occam = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings
+
+        tax_contraction = 0.0
+        if proposal_support_curr > proposal_support && proposal_support > 0.0
+            tax_contraction = Float64(P - 1) * log(proposal_support_curr / proposal_support)
+        end
+        tax_occam = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_contraction
 
         # 4. Evaluate Gamma-Marginalized Log-Evidence Delta ln M_p
         llr_p = 0.0
@@ -423,6 +431,11 @@ function detect_and_birth_or_split_packets!(
         end
     end
 
+    delta_reach = max(3.0 * sigma_prior, 0.25)
+    curr_left = isempty(m.packets) ? (m.delta_left - delta_reach) : (minimum(m.packets[q].mu - 4.0 * sqrt(m.packets[q].var) for q in 1:length(m.packets)) - delta_reach)
+    curr_right = isempty(m.packets) ? (m.delta_right + delta_reach) : (maximum(m.packets[q].mu + 4.0 * sqrt(m.packets[q].var) for q in 1:length(m.packets)) + delta_reach)
+    proposal_support = max(curr_right - curr_left, 2.0 * delta_reach)
+
     # 1. Bimodal Packet Split (Evaluated on Assigned Spikes S_p)
     if allow_multi_packets && !isempty(m.packets)
         P_curr = length(m.packets)
@@ -477,10 +490,17 @@ function detect_and_birth_or_split_packets!(
                     t_cand = cand_sorted[i]
                     (t_cand - last_split_t < subsample_step) && continue
 
-                    rayleigh_dist = max(tau_refractory, 2.0 * sqrt(var_prior + pkt.var))
-                    if abs(t_cand - pkt.mu) < rayleigh_dist
-                        continue
+                    # Rayleigh Resolvability Boundary (Delta mu >= 2*sqrt(2)*sigma_prior) against all same-channel packets
+                    unimodal_overlap = false
+                    for q in m.chan_to_packets[chan]
+                        q_sigma = sqrt(m.packets[q].var)
+                        rayleigh_dist = max(tau_refractory, 2.0 * sqrt(2.0) * sigma_prior, 2.0 * sqrt(var_prior + q_sigma * q_sigma))
+                        if abs(t_cand - m.packets[q].mu) < rayleigh_dist
+                            unimodal_overlap = true
+                            break
+                        end
                     end
+                    unimodal_overlap && continue
 
                     sum_w = 0.0
                     for j in 1:N_split_cand
@@ -527,52 +547,75 @@ function detect_and_birth_or_split_packets!(
                         mu_refined += clamp(-g / h, -sigma_prior, sigma_prior)
                     end
 
-                    rayleigh_dist = max(tau_refractory, 2.0 * sqrt(var_prior + pkt.var))
-                    if abs(mu_refined - pkt.mu) >= rayleigh_dist
-                        P_new = length(m.packets) + 1
-                        init_mass = (alpha_a + Float64(N_split_cand)) / (beta_a + E_eff)
-                        new_pkt = Packet(P_new, chan, mu_refined, var_prior, max(init_mass, 0.05))
-                        push!(m.packets, new_pkt)
-
-                        R_max = size(m.W, 1)
-                        new_W = zeros(Float64, R_max, P_new)
-                        new_W[:, 1:(P_new-1)] = m.W
-                        m.W = new_W
-                        push!(m.chan_to_packets[chan], P_new)
-
-                        for occ in occurrences
-                            push!(occ.counts, 0)
-                            push!(occ.sum_t, 0.0)
-                            push!(occ.sum_t2, 0.0)
+                    # Enforce Rayleigh separation on refined latency against all same-channel packets
+                    unimodal_overlap = false
+                    for q in m.chan_to_packets[chan]
+                        q_sigma = sqrt(m.packets[q].var)
+                        rayleigh_dist = max(tau_refractory, 2.0 * sqrt(2.0) * sigma_prior, 2.0 * sqrt(var_prior + q_sigma * q_sigma))
+                        if abs(mu_refined - m.packets[q].mu) < rayleigh_dist
+                            unimodal_overlap = true
+                            break
                         end
-
-                        for s_idx in split_spk_indices
-                            old_p = assign[s_idx].packet_idx
-                            eid = assign[s_idx].event_id
-                            occ = occ_dict[eid]
-                            t_s = spike_t[s_idx]
-                            occ.counts[old_p] -= 1
-                            occ.sum_t[old_p] -= t_s
-                            occ.sum_t2[old_p] -= t_s * t_s
-                            assign[s_idx] = SpikeAssignment(eid, P_new)
-                            occ.counts[P_new] += 1
-                            occ.sum_t[P_new] += t_s
-                            occ.sum_t2[P_new] += t_s * t_s
-                        end
-
-                        update_motif_bounds!(m; bg_rates=bg_rates)
-                        birthed_any = true
-                        break
                     end
+                    unimodal_overlap && continue
+
+                    # Existing-Packet Envelope Dilution Tax on Split
+                    new_left = min(curr_left, (mu_refined - 4.0 * sigma_prior) - delta_reach)
+                    new_right = max(curr_right, (mu_refined + 4.0 * sigma_prior) + delta_reach)
+                    new_proposal_support = max(new_right - new_left, 2.0 * delta_reach)
+                    tax_dilation = 0.0
+                    if new_proposal_support > proposal_support && proposal_support > 0.0
+                        tax_dilation = Float64(P_curr) * log(new_proposal_support / proposal_support)
+                    end
+                    if best_split_llr <= occam_split + tax_dilation
+                        continue
+                    end
+
+                    P_new = length(m.packets) + 1
+                    init_mass = (alpha_a + Float64(N_split_cand)) / (beta_a + E_eff)
+                    new_pkt = Packet(P_new, chan, mu_refined, var_prior, max(init_mass, 0.05))
+                    push!(m.packets, new_pkt)
+
+                    R_max = size(m.W, 1)
+                    new_W = zeros(Float64, R_max, P_new)
+                    new_W[:, 1:(P_new-1)] = m.W
+                    m.W = new_W
+                    push!(m.chan_to_packets[chan], P_new)
+
+                    for occ in occurrences
+                        push!(occ.counts, 0)
+                        push!(occ.sum_t, 0.0)
+                        push!(occ.sum_t2, 0.0)
+                    end
+
+                    for s_idx in split_spk_indices
+                        old_p = assign[s_idx].packet_idx
+                        eid = assign[s_idx].event_id
+                        occ = occ_dict[eid]
+                        t_s = spike_t[s_idx]
+                        occ.counts[old_p] -= 1
+                        occ.sum_t[old_p] -= t_s
+                        occ.sum_t2[old_p] -= t_s * t_s
+                        assign[s_idx] = SpikeAssignment(eid, P_new)
+                        occ.counts[P_new] += 1
+                        occ.sum_t[P_new] += t_s
+                        occ.sum_t2[P_new] += t_s * t_s
+                    end
+
+                    update_motif_bounds!(m; bg_rates=bg_rates)
+                    birthed_any = true
+                    curr_left = new_left
+                    curr_right = new_right
+                    proposal_support = new_proposal_support
+                    break
                 end
             end
         end
     end
 
     # 2. Background Packet Birth (Evaluated on Unassigned Spikes)
-    delta_reach = max(3.0 * sigma_prior, 0.25)
-    s_left = m.delta_left - delta_reach
-    s_right = m.delta_right + delta_reach
+    s_left = curr_left
+    s_right = curr_right
     proposal_support = max(s_right - s_left, 2.0 * delta_reach)
 
     occam_birth = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings
@@ -630,12 +673,12 @@ function detect_and_birth_or_split_packets!(
             (t_cand < s_left || t_cand > s_right) && continue
             (t_cand - last_eval_t < subsample_step) && continue
 
+            # Rayleigh Resolvability Boundary (Delta mu >= 2*sqrt(2)*sigma_prior) against all same-channel packets
             unimodal_overlap = false
             for p in existing_packets
                 existing_sigma = sqrt(m.packets[p].var)
-                rayleigh_dist = 2.0 * sqrt(var_prior + existing_sigma * existing_sigma)
-                min_sep = max(tau_refractory, rayleigh_dist)
-                if abs(t_cand - m.packets[p].mu) < min_sep
+                rayleigh_dist = max(tau_refractory, 2.0 * sqrt(2.0) * sigma_prior, 2.0 * sqrt(var_prior + existing_sigma * existing_sigma))
+                if abs(t_cand - m.packets[p].mu) < rayleigh_dist
                     unimodal_overlap = true
                     break
                 end
@@ -693,17 +736,31 @@ function detect_and_birth_or_split_packets!(
                 mu_refined = clamp(mu_refined + clamp(step, -sigma_prior, sigma_prior), s_left, s_right)
             end
 
+            # Enforce Rayleigh separation on refined latency against all same-channel packets
             unimodal_overlap = false
             for p in existing_packets
                 existing_sigma = sqrt(m.packets[p].var)
-                rayleigh_dist = 2.0 * sqrt(var_prior + existing_sigma * existing_sigma)
-                min_sep = max(tau_refractory, rayleigh_dist)
-                if abs(mu_refined - m.packets[p].mu) < min_sep
+                rayleigh_dist = max(tau_refractory, 2.0 * sqrt(2.0) * sigma_prior, 2.0 * sqrt(var_prior + existing_sigma * existing_sigma))
+                if abs(mu_refined - m.packets[p].mu) < rayleigh_dist
                     unimodal_overlap = true
                     break
                 end
             end
             unimodal_overlap && continue
+
+            # Existing-Packet Envelope Dilution Tax on Birth
+            new_left = min(curr_left, (mu_refined - 4.0 * sigma_prior) - delta_reach)
+            new_right = max(curr_right, (mu_refined + 4.0 * sigma_prior) + delta_reach)
+            new_proposal_support = max(new_right - new_left, 2.0 * delta_reach)
+            tax_dilation = 0.0
+            P_curr = length(m.packets)
+            if new_proposal_support > proposal_support && proposal_support > 0.0
+                tax_dilation = Float64(P_curr) * log(new_proposal_support / proposal_support)
+            end
+            occam_birth_actual = occam_birth + tax_dilation
+            if best_llr <= occam_birth_actual
+                continue
+            end
 
             P_new = length(m.packets) + 1
             init_mass = (alpha_a + 1.0) / (beta_a + E_m)
@@ -756,6 +813,10 @@ function detect_and_birth_or_split_packets!(
 
             new_pkt.mass = max((alpha_a + Float64(harvested_count)) / (beta_a + E_eff), 0.05)
             birthed_any = true
+            curr_left = new_left
+            curr_right = new_right
+            proposal_support = new_proposal_support
+            occam_birth = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings
         end
     end
 
