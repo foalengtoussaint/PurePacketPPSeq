@@ -323,14 +323,11 @@ function count_candidate_clusters_in_window(
     spike_t::Vector{Float64},
     spike_neuron::Vector{Int},
     assign::Vector{SpikeAssignment},
-    tau_seed::Float64,
-    reach::Float64,
-    T_total::Float64,
+    t_start::Float64,
+    t_end::Float64,
     sigma_prior::Float64,
     target_eid::Int=0
 )::Int
-    t_start = max(0.0, tau_seed - reach)
-    t_end = min(tau_seed + reach, T_total)
     delta_t_sep = 2.0 * sqrt(2.0) * sigma_prior
 
     i_start = searchsortedfirst(spike_t, t_start)
@@ -357,6 +354,23 @@ function count_candidate_clusters_in_window(
         total_clusters += n_cl
     end
     return total_clusters
+end
+
+function count_candidate_clusters_in_window(
+    spike_t::Vector{Float64},
+    spike_neuron::Vector{Int},
+    assign::Vector{SpikeAssignment},
+    tau_seed::Float64,
+    reach::Float64,
+    T_total::Float64,
+    sigma_prior::Float64,
+    target_eid::Int=0
+)::Int
+    t_start = max(0.0, tau_seed - reach)
+    t_end = min(tau_seed + reach, T_total)
+    return count_candidate_clusters_in_window(
+        spike_t, spike_neuron, assign, t_start, t_end, sigma_prior, target_eid
+    )
 end
 
 """
@@ -459,27 +473,30 @@ function prune_dead_motifs!(
                 tax_per_pkt = log(W_eff / (sqrt(2π) * sigma_prior)) + log(beta_a + 1.0)
                 tax_dict = max(0.0, tax_crp) + P_m * tax_per_pkt
 
-                # Guard 2 & 3: For singleton death (E_m = 1), evaluate exact combinatorial model prior
-                # and centroid marginalization factor on the reference pool D_bg ∪ S_{e_0}.
-                log_q_ratio = if E_m == 1
-                    occ = occs[1]
-                    n_occ_spk = length(occ.members)
-
-                    reach = max(W_eff, 0.75)
-                    K_cand = count_candidate_clusters_in_window(
-                        spike_t, spike_neuron, assign, occ.tau, reach, T_total, sigma_prior, occ.id
-                    )
-                    if K_cand < P_m
-                        continue # Reversibility guard: single-step birth unreachable (alpha_death = 0)
-                    end
-                    log_comb = loggamma(K_cand + 1) - loggamma(P_m + 1) - loggamma(K_cand - P_m + 1)
-                    centroid_tax = 0.5 * sum(log(Float64(max(1, occ.counts[p]))) for p in 1:P_m if occ.counts[p] > 0)
-                    tax_dict += log_comb + centroid_tax
-
-                    log(max(1.0, Float64(n_occ_spk)) * Float64(n_candidates) / Float64(n_bg_spikes + n_occ_spk))
-                else
-                    log(Float64(n_candidates) / Float64(n_bg_spikes))
+                # Guard 2 & 3: Evaluate exact combinatorial model prior and centroid
+                # marginalization factor across all E_m >= 1 on reference pool D_bg ∪ S_{anchor}.
+                anchor_occ = occs[1]
+                reach = max(W_eff, 0.75)
+                K_cand = count_candidate_clusters_in_window(
+                    spike_t, spike_neuron, assign, anchor_occ.tau, reach, T_total, sigma_prior, anchor_occ.id
+                )
+                if K_cand < P_m
+                    continue # Reversibility guard: single-step birth unreachable (alpha_death = 0)
                 end
+                log_comb = loggamma(K_cand + 1) - loggamma(P_m + 1) - loggamma(K_cand - P_m + 1)
+
+                # Centroid shrinkage tax across all assigned spikes N_p = sum_e n_{e,p}
+                centroid_tax = 0.5 * sum(
+                    begin
+                        N_p = sum(occ.counts[p] for occ in occs; init=0)
+                        log(Float64(max(1, N_p)))
+                    end
+                    for p in 1:P_m
+                )
+                tax_dict += log_comb + centroid_tax
+
+                n_tot_occ_spk = sum(length(occ.members) for occ in occs)
+                log_q_ratio = log(max(1.0, Float64(n_tot_occ_spk)) * Float64(n_candidates) / Float64(n_bg_spikes + n_tot_occ_spk))
 
                 tau_min = max(0.0, -m.delta_left)
                 tau_max = max(tau_min, T_total - m.delta_right)
@@ -494,7 +511,7 @@ function prune_dead_motifs!(
                     delta_ln_M = calc_marginal_log_evidence(
                         m, occ.counts, occ.members, occ.tau, occ.u,
                         spike_t, assign, bg_rates, mask;
-                        alpha_c=alpha_c, beta_c=beta_c
+                        alpha_c=alpha_c, beta_c=beta_c, ou_ctx=ou_ctx
                     )
                     y_m = evaluate_motif_log_intensity(ou_ctx, mid, occ.tau)
 
@@ -502,7 +519,7 @@ function prune_dead_motifs!(
                         tax_occ_e = tax_e0 - y_m
                     else
                         ratio_E = Float64(idx_e) / (alpha_m + Float64(idx_e) - 1.0)
-                        tax_occ_e = log((beta_m + T_eff_m) * ratio_E / max(W_eff, 1e-6)) - y_m
+                        tax_occ_e = log((beta_m + T_eff_m) * ratio_E / max(T_span, 1e-6)) - y_m
                     end
                     net_occ_evidence += (delta_ln_M + y_m - tax_occ_e)
                 end
@@ -511,9 +528,9 @@ function prune_dead_motifs!(
                 # E_net = \sum_e [ Δln M(e) + y_m(τ_e) - Tax_Occam(e) ] - Tax_dict(m)
                 E_net = net_occ_evidence - tax_dict
 
-                # Reverse jump (m, {e}) -> ∅ is accepted with MH ratio:
-                # ln α_death = min(0, -E_net + log_q_ratio)
-                log_alpha = min(0.0, -E_net + log_q_ratio)
+                # Reverse jump (m, {e}) -> ∅ evaluated under exact potential reciprocity:
+                # ln α_death = min(0, -E_net)
+                log_alpha = min(0.0, -E_net)
 
                 if log(rand(rng)) < log_alpha
                     # Accept symmetric joint death jump: release all assigned spikes to background and delete m

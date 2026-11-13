@@ -203,7 +203,8 @@ function calc_marginal_log_evidence(
     bg_rates::Vector{Float64},
     active_mask::BitVector;
     alpha_c::Float64=10.0,
-    beta_c::Float64=10.0
+    beta_c::Float64=10.0,
+    ou_ctx::Union{Nothing, ContinuousOUContext}=nothing
 )
     P = length(m.packets)
     P == 0 && return -Inf
@@ -220,7 +221,11 @@ function calc_marginal_log_evidence(
         pkt = m.packets[p]
         sig2 = pkt.var
         sig = sqrt(sig2)
-        lam0 = max(bg_rates[pkt.channel], 1e-12)
+        lam0 = if ou_ctx !== nothing
+            max(exp(evaluate_background_log_intensity(ou_ctx, bg_rates, pkt.channel, spike_t[spk_idx])), 1e-12)
+        else
+            max(bg_rates[pkt.channel], 1e-12)
+        end
 
         pred_s = 0.0
         @simd for r in 1:min(size(m.W, 1), length(u), length(active_mask))
@@ -357,7 +362,7 @@ function prune_dead_occurrences!(
         delta_ln_M = calc_marginal_log_evidence(
             m, occ.counts, occ.members, occ.tau, occ.u,
             spike_t, assign, bg_rates, active_mask;
-            alpha_c=alpha_c, beta_c=beta_c
+            alpha_c=alpha_c, beta_c=beta_c, ou_ctx=ou_ctx
         )
 
         # 2. Reference state: temporarily release member spikes back to background (D_bg ∪ S_e)
@@ -386,13 +391,17 @@ function prune_dead_occurrences!(
         for p in 1:P
             pkt = m.packets[p]
             k = pkt.channel
-            lam0 = max(bg_rates[k], 1e-12)
+            t_pred = occ.tau + pkt.mu
+            lam0 = if ou_ctx !== nothing
+                max(exp(evaluate_background_log_intensity(ou_ctx, bg_rates, k, t_pred)), 1e-12)
+            else
+                max(bg_rates[k], 1e-12)
+            end
             w_p = pkt.mass / lam0
             sig2 = pkt.var
             sig = sqrt(sig2)
             inv_2sig2 = 0.5 / sig2
             norm_const = 1.0 / (sqrt(2pi) * sig)
-            t_pred = occ.tau + pkt.mu
 
             if chan_to_spikes !== nothing
                 spks_k = chan_to_spikes[k]
@@ -643,10 +652,13 @@ function detect_and_birth_occurrences!(
 
                 sig2 = pkt.var
                 sig = sqrt(sig2)
-                lam0 = max(bg_rates[c], 1e-12)
-                w_p = pkt.mass / lam0
-
                 t_pred = tau_star + pkt.mu
+                lam0 = if ou_ctx !== nothing
+                    max(exp(evaluate_background_log_intensity(ou_ctx, bg_rates, c, t_pred)), 1e-12)
+                else
+                    max(bg_rates[c], 1e-12)
+                end
+                w_p = pkt.mass / lam0
                 t_lo = t_pred - 4.0 * sig
                 t_hi = t_pred + 4.0 * sig
 
@@ -736,14 +748,18 @@ function detect_and_birth_occurrences!(
                     pkt = m.packets[p]
                     sig2 = pkt.var
                     sig = sqrt(sig2)
-                    lam0 = max(bg_rates[c], 1e-12)
+                    lam_s = if ou_ctx !== nothing
+                        max(exp(evaluate_background_log_intensity(ou_ctx, bg_rates, c, spike_t[s])), 1e-12)
+                    else
+                        max(bg_rates[c], 1e-12)
+                    end
                     pred_s = 0.0
                     for r in 1:K
                         pred_s += m.W[ws.act[r], p] * u_sub[r]
                     end
                     dt_warp = spike_t[s] - (tau_star + pkt.mu + pred_s)
                     N_j = exp(-0.5 * (dt_warp * dt_warp) / sig2) / (sqrt(2pi) * sig)
-                    ratio = (pkt.mass * N_j) / lam0
+                    ratio = (pkt.mass * N_j) / lam_s
                     kernel_sum_warped += log(max(ratio, 1e-12))
                 end
                 if kernel_sum_warped > kernel_sum
@@ -832,7 +848,7 @@ function detect_and_birth_occurrences!(
                 ev_incumbent = calc_marginal_log_evidence(
                     m, incumbent.counts, incumbent.members, incumbent.tau, incumbent.u,
                     spike_t, assign, bg_rates, act_mask;
-                    alpha_c=alpha_c, beta_c=beta_c
+                    alpha_c=alpha_c, beta_c=beta_c, ou_ctx=ou_ctx
                 )
                 if delta_ln_M_star > ev_incumbent + delta_margin
                     for j in incumbent.members

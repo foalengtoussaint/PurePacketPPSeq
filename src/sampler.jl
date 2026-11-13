@@ -263,7 +263,7 @@ Zero heap allocations in candidate scoring.
 function resample_spike_pure_packet!(
     i::Int, t_i::Float64, chan_i::Int,
     assign::Vector{SpikeAssignment},
-    candidate_occs,
+    candidate_occs::Union{AbstractVector{<:PureOccurrence}, Base.ValueIterator},
     occurrences_dict::Dict{Int, PureOccurrence},
     motifs::Dict{Int, PurePacketMotif},
     bg_rates::Vector{Float64},

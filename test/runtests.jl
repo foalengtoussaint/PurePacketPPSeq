@@ -1332,8 +1332,8 @@ end
             end
         end
 
-        # Sequence occurrences of motif 1 at t=5.0, 15.0, 25.0
-        for tau in [5.0, 15.0, 25.0]
+        # Sequence occurrences of motif 1 at t=4.0, 8.0, 15.0, 21.0, 26.0 (5 occurrences)
+        for tau in [4.0, 8.0, 15.0, 21.0, 26.0]
             for (p, c) in enumerate([2, 5, 8, 12, 17])
                 push!(spk_times, tau + 0.03 * p)
                 push!(spk_chans, c)

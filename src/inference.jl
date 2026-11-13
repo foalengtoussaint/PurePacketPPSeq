@@ -366,16 +366,13 @@ function step_pure_packet_sweep!(
         ou_ctx=ou_ctx
     )
 
-    # Clean up empty occurrences
-    empty_eids = Int[]
-    for (eid, occ) in occurrences
-        if isempty(occ.members)
-            push!(empty_eids, eid)
-        end
-    end
-    for eid in empty_eids
-        delete!(occurrences, eid)
-    end
+    # Clean up dead and hollowed-out occurrences (N_active_pkts < 2)
+    prune_dead_occurrences!(
+        occurrences, motifs, spike_t, assign, bg_rates, T_total, ard_state.active_mask;
+        chan_to_spikes=chan_to_spikes, counts_bg=counts_bg,
+        alpha_c=alpha_c, beta_c=beta_c, alpha_m=alpha_m, beta_m=beta_m,
+        gamma_m=gamma_m, ou_ctx=ou_ctx, rng=rng
+    )
 
     # 4. Mechanism m=4: Occurrence Coordinates u_e with Continuous Student-t Precisions
     for (eid, occ) in occurrences

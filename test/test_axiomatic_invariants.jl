@@ -297,7 +297,7 @@ println("=================================================================")
         model_null = initialize_scratch_model(ds_null, init_motifs; R_init=1)
 
         # Run 5 sweeps of MCMC on pure noise
-        fit!(model_null, ds_null; sweeps=5, checkpoint_interval=5, allow_motif_birth=true)
+        fit!(model_null, ds_null; sweeps=5, checkpoint_interval=5, allow_motif_birth=true, rng=rng)
 
         # Specificity Checks:
         # 1. Background rate recovers true generating rate
