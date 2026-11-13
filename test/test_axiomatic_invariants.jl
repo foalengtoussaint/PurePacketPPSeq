@@ -115,7 +115,10 @@ println("=================================================================")
         tax_e0 = log((beta_m_val + T_total_val) / max(W_window, 1e-6)) + log(1.0 / alpha_m_val)
         tax_comb = loggamma(K_cand + 1) - loggamma(P_new + 1) - loggamma(K_cand - P_new + 1)
         centroid_tax = 0.5 * P_new * log(1.0) # n_p = 1 single spike per packet in benchmark
-        tax_occam_motif = tax_crp + P_new * tax_per_pkt + tax_e0 + tax_comb + centroid_tax
+        pkts_m3 = [Packet(p, p, 0.03 * (p - 1), var_prior, 1.0) for p in 1:P_new]
+        m3_temp = PurePacketMotif(1, pkts_m3, 1, N_chans; W_window=W_window)
+        tax_chan_m3 = -compute_motif_channel_log_prior(m3_temp.chan_to_packets, P_new, N_chans, W_window; sigma_prior=sigma_prior)
+        tax_occam_motif = tax_crp + P_new * tax_per_pkt + tax_chan_m3 + tax_e0 + tax_comb + centroid_tax
         
         # Synthetic burst evidence
         burst_llr = 0.0
