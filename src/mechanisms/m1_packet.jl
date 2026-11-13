@@ -174,7 +174,7 @@ function prune_dead_packets!(
     occam_tax::Float64=2.0
 )::Vector{Int}
     P = length(m.packets)
-    P <= 1 && return Int[]
+    P <= 2 && return Int[]
     E_m = length(occurrences)
     E_eff = max(sum(occ.amplitude for occ in occurrences; init=0.0), 1.0)
     var_prior = sigma_prior^2
@@ -182,6 +182,9 @@ function prune_dead_packets!(
     dead_packets = Int[]
 
     for p in 1:P
+        if P - length(dead_packets) <= 2
+            break
+        end
         pkt = m.packets[p]
         chan = pkt.channel
         survivors_tentative = [q for q in 1:P if q != p]

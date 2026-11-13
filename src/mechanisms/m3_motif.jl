@@ -104,6 +104,8 @@ function detect_and_birth_new_motifs!(
     gamma_motif::Float64=100.0,
     alpha_a::Float64=1.0,
     beta_a::Float64=1.0,
+    alpha_m::Float64=0.05,
+    beta_m::Float64=1.0,
     counts_bg::Union{Vector{Int}, Nothing}=nothing,
     rng::AbstractRNG=Random.default_rng()
 )::Int
@@ -178,12 +180,13 @@ function detect_and_birth_new_motifs!(
             llr += log(max(ratio, 1.0))
         end
 
-        # Exact P_new-Packet Occam Volume Tax + CRP Motif Table Prior:
-        # Tax_Occam = ln(E / gamma_motif) + \sum_{p=1}^{P_new} [ ln(|S_m| / (sqrt(2pi)*sigma_prior)) + ln(beta_a + 1) ]
+        # Exact P_new-Packet Occam Volume Tax + CRP Motif Table Prior + Seed Occurrence Tax:
+        # Tax_Occam = ln(E / gamma_motif) + \sum_{p=1}^{P_new} [ ln(|S_m| / (sqrt(2pi)*sigma_prior)) + ln(beta_a + 1) ] + Tax_Occam(e_0)
         P_new = length(sorted_chans)
         tax_crp = log(max(1.0, Float64(length(occurrences))) / max(1e-6, gamma_motif))
         tax_per_pkt = log(W_window / (sqrt(2π) * sigma_prior)) + log(beta_a + 1.0)
-        tax_occam = max(0.0, tax_crp) + P_new * tax_per_pkt
+        tax_e0 = log((beta_m + T_total) / max(W_window, 1e-6)) + log(1.0 / alpha_m)
+        tax_occam = max(0.0, tax_crp) + P_new * tax_per_pkt + tax_e0
         threshold = occam_motif !== nothing ? occam_motif : tax_occam
 
         if llr > threshold
@@ -259,10 +262,15 @@ function prune_dead_motifs!(
     bg_rates::Union{Vector{Float64}, Nothing}=nothing,
     counts_bg::Union{Vector{Int}, Nothing}=nothing,
     active_mask::Union{BitVector, Nothing}=nothing,
+    ou_ctx::Union{Nothing, ContinuousOUContext}=nothing,
+    T_total::Float64=25.0,
     gamma_motif::Float64=100.0,
     alpha_c::Float64=10.0,
     beta_c::Float64=10.0,
+    alpha_a::Float64=1.0,
     beta_a::Float64=1.0,
+    alpha_m::Float64=0.05,
+    beta_m::Float64=1.0,
     sigma_prior::Float64=0.015,
     rng::AbstractRNG=Random.default_rng()
 )::Vector{Int}
@@ -285,63 +293,86 @@ function prune_dead_motifs!(
         end
     end
 
-    # 3. Phase 2: Symmetric Joint Motif Death Jump (m, e) -> ∅ for Singletons (E_m == 1)
+    # 3. Phase 2: Unified Net Log-Evidence Joint Motif Death Jump (m, {e}) -> ∅ for E_m >= 1
     if assign !== nothing && spike_t !== nothing && bg_rates !== nothing
         n_bg_spikes = count(a -> a.event_id == 0, assign)
-        singleton_mids = [
+        candidate_mids = [
             mid for mid in keys(motifs)
-            if mid ∉ frozen_motif_ids && length(get(motif_occs, mid, PureOccurrence[])) == 1
+            if mid ∉ frozen_motif_ids && !isempty(get(motif_occs, mid, PureOccurrence[]))
         ]
-        n_singletons = length(singleton_mids)
+        n_candidates = length(candidate_mids)
 
-        if n_singletons > 0 && n_bg_spikes > 0
-            # Proposal ratio: q(birth) / q(death) = (1 / n_bg_spikes) / (1 / n_singletons)
-            #                                     = n_singletons / n_bg_spikes
-            log_q_ratio = log(Float64(n_singletons) / Float64(n_bg_spikes))
+        if n_candidates > 0 && n_bg_spikes > 0
+            # Proposal ratio: q(birth) / q(death) = (1 / n_bg_spikes) / (1 / n_candidates)
+            #                                     = n_candidates / n_bg_spikes
+            log_q_ratio = log(Float64(n_candidates) / Float64(n_bg_spikes))
             E_total = length(occurrences)
 
-            for mid in singleton_mids
+            for mid in candidate_mids
                 !haskey(motifs, mid) && continue
                 m = motifs[mid]
-                occ = motif_occs[mid][1]
-                !haskey(occurrences, occ.id) && continue
+                occs = get(motif_occs, mid, PureOccurrence[])
+                isempty(occs) && continue
+                E_m = length(occs)
 
                 P_m = length(m.packets)
                 W_eff = max(m.delta_right - m.delta_left, 0.10)
                 tax_crp = log(max(1.0, Float64(E_total)) / max(1e-6, gamma_motif))
                 tax_per_pkt = log(W_eff / (sqrt(2π) * sigma_prior)) + log(beta_a + 1.0)
-                tax_occam = max(0.0, tax_crp) + P_m * tax_per_pkt
+                tax_dict = max(0.0, tax_crp) + P_m * tax_per_pkt
+
+                tau_min = max(0.0, -m.delta_left)
+                tau_max = max(tau_min, T_total - m.delta_right)
+                T_span = max(tau_max - tau_min, 1e-6)
+                T_eff_m = compute_effective_motif_duration(ou_ctx, mid, tau_min, tau_max)
+                tax_e0 = log((beta_m + T_eff_m) / max(W_eff, 1e-6)) + log(1.0 / alpha_m)
 
                 mask = active_mask !== nothing ? active_mask : trues(size(m.W, 1))
-                delta_ln_M = calc_marginal_log_evidence(
-                    m, occ.counts, occ.members, occ.tau, occ.u,
-                    spike_t, assign, bg_rates, mask;
-                    alpha_c=alpha_c, beta_c=beta_c
-                )
+                net_occ_evidence = 0.0
 
-                # MH acceptance for reverse jump (m, e) -> ∅:
-                # Δln Post = Δln M(e) - Tax_Occam(m)
-                # ln α_death = min(0, -Δln Post + ln(q_birth / q_death))
-                #            = min(0, (Tax_Occam - Δln M) + log_q_ratio)
-                delta_post = delta_ln_M - tax_occam
-                log_alpha = min(0.0, -delta_post + log_q_ratio)
+                for (idx_e, occ) in enumerate(occs)
+                    delta_ln_M = calc_marginal_log_evidence(
+                        m, occ.counts, occ.members, occ.tau, occ.u,
+                        spike_t, assign, bg_rates, mask;
+                        alpha_c=alpha_c, beta_c=beta_c
+                    )
+                    y_m = evaluate_motif_log_intensity(ou_ctx, mid, occ.tau)
+
+                    if idx_e == 1
+                        tax_occ_e = tax_e0 - y_m
+                    else
+                        ratio_E = Float64(idx_e) / (alpha_m + Float64(idx_e) - 1.0)
+                        tax_occ_e = log((beta_m + T_eff_m) * ratio_E / max(W_eff, 1e-6)) - y_m
+                    end
+                    net_occ_evidence += (delta_ln_M + y_m - tax_occ_e)
+                end
+
+                # Net log-evidence of keeping the motif:
+                # E_net = \sum_e [ Δln M(e) + y_m(τ_e) - Tax_Occam(e) ] - Tax_dict(m)
+                E_net = net_occ_evidence - tax_dict
+
+                # Reverse jump (m, {e}) -> ∅ is accepted with MH ratio:
+                # ln α_death = min(0, -E_net + log_q_ratio)
+                log_alpha = min(0.0, -E_net + log_q_ratio)
 
                 if log(rand(rng)) < log_alpha
-                    # Accept symmetric death jump: release spikes and delete both e and m
-                    for s_idx in occ.members
-                        assign[s_idx] = SpikeAssignment(0, 0)
-                        if counts_bg !== nothing && spike_neuron !== nothing
-                            c = spike_neuron[s_idx]
-                            if 1 <= c <= length(counts_bg)
-                                counts_bg[c] += 1
+                    # Accept symmetric joint death jump: release all assigned spikes to background and delete m
+                    for occ in occs
+                        for s_idx in occ.members
+                            assign[s_idx] = SpikeAssignment(0, 0)
+                            if counts_bg !== nothing && spike_neuron !== nothing
+                                c = spike_neuron[s_idx]
+                                if 1 <= c <= length(counts_bg)
+                                    counts_bg[c] += 1
+                                end
                             end
                         end
+                        delete!(occurrences, occ.id)
                     end
-                    delete!(occurrences, occ.id)
                     delete!(motifs, mid)
                     push!(dead_mids, mid)
-                    println(@sprintf("   --> [Level 3 Motif Pruned] Motif ID: %d (Singleton Occam Death: Ev %.1f < Tax %.1f | ΔPost: %+.1f)",
-                            mid, delta_ln_M, tax_occam, delta_post))
+                    println(@sprintf("   --> [Level 3 Motif Pruned] Motif ID: %d (Joint Motif Death: E_net: %.1f < 0 | Ev: %.1f, DictTax: %.1f)",
+                            mid, E_net, net_occ_evidence, tax_dict))
                 end
             end
         end

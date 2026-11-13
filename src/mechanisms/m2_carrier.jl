@@ -242,11 +242,72 @@ function calc_marginal_log_evidence(
 end
 
 """
-    prune_dead_occurrences!(occurrences, motifs, spike_t, assign, bg_rates, T_max, active_mask; alpha_c=10.0, beta_c=10.0, gamma_m=100.0)
+    evaluate_motif_log_intensity(ctx, mid, t) -> Float64
 
-Prunes occurrences that fail the exact Marginal Negative Binomial Bayes Factor test:
-    Delta ln M(e) <= Tax_Occam
-Releases member spikes back to background.
+Evaluates continuous motif engagement log-intensity y_m(t) at time t.
+Returns 0.0 if ctx is nothing or if motif OU is inactive.
+"""
+@inline function evaluate_motif_log_intensity(
+    ctx::Union{Nothing, ContinuousOUContext},
+    mid::Int,
+    t::Float64
+)::Float64
+    ctx === nothing && return 0.0
+    (mid < 1 || mid > size(ctx.y_motif, 1)) && return 0.0
+    dt = ctx.dt_motif
+    B = ctx.B_motif
+    B <= 1 && return 0.0
+    idx = clamp(floor(Int, t / dt) + 1, 1, B - 1)
+    alpha = (t - (idx - 1) * dt) / dt
+    return (1.0 - alpha) * ctx.y_motif[mid, idx] + alpha * ctx.y_motif[mid, idx + 1]
+end
+
+"""
+    compute_effective_motif_duration(ctx, mid, tau_min, tau_max) -> Float64
+
+Calculates the exact piecewise-linear continuous exposure integral:
+    T_eff,m = int_{tau_min}^{tau_max} exp(y_m(t)) dt.
+Reduces identically to T_span = tau_max - tau_min when y_m(t) == 0.
+"""
+function compute_effective_motif_duration(
+    ctx::Union{Nothing, ContinuousOUContext},
+    mid::Int,
+    tau_min::Float64,
+    tau_max::Float64
+)::Float64
+    T_span = max(tau_max - tau_min, 1e-6)
+    (ctx === nothing || mid < 1 || mid > size(ctx.y_motif, 1)) && return T_span
+    dt = ctx.dt_motif
+    B = ctx.B_motif
+    B <= 1 && return T_span
+
+    total = 0.0
+    for j in 1:(B-1)
+        t_lo = (j - 1) * dt
+        t_hi = j * dt
+        seg_lo = max(t_lo, tau_min)
+        seg_hi = min(t_hi, tau_max)
+        if seg_hi > seg_lo
+            alpha_lo = (seg_lo - t_lo) / dt
+            alpha_hi = (seg_hi - t_lo) / dt
+            y_lo = (1.0 - alpha_lo) * ctx.y_motif[mid, j] + alpha_lo * ctx.y_motif[mid, j+1]
+            y_hi = (1.0 - alpha_hi) * ctx.y_motif[mid, j] + alpha_hi * ctx.y_motif[mid, j+1]
+            total += exp_integral_segment(y_lo, y_hi, seg_hi - seg_lo)
+        end
+    end
+    return max(total, 0.01 * T_span)
+end
+
+
+"""
+    prune_dead_occurrences!(occurrences, motifs, spike_t, assign, bg_rates, T_max, active_mask; ...)
+
+Prunes occurrences using exact continuous-time RJMCMC reverse jump acceptance:
+    ln R_death(e) = -Delta ln M(e) - y_m(tau_e) + ln( (beta_m + T_eff,m) * (E_m / (alpha_m + E_m - 1)) * q_birth(tau_e) )
+with Campbell's theorem null-expectation normalized proposal density:
+    q_birth(tau_e) = (q_sum(tau_e) + A_m) / (W_m + A_m * T_span)
+evaluated on the reference background pool D_bg ∪ S_e.
+Accepts death stochastically via log(rand(rng)) < min(0.0, ln_R_death).
 """
 function prune_dead_occurrences!(
     occurrences::Dict{Int, PureOccurrence},
@@ -256,9 +317,15 @@ function prune_dead_occurrences!(
     bg_rates::Vector{Float64},
     T_max::Float64,
     active_mask::BitVector;
+    chan_to_spikes::Union{Nothing, Vector{Vector{Int}}}=nothing,
+    counts_bg::Union{Nothing, Vector{Int}}=nothing,
     alpha_c::Float64=10.0,
     beta_c::Float64=10.0,
-    gamma_m::Float64=100.0
+    alpha_m::Float64=0.05,
+    beta_m::Float64=1.0,
+    gamma_m::Float64=100.0,
+    ou_ctx::Union{Nothing, ContinuousOUContext}=nothing,
+    rng::AbstractRNG=Random.default_rng()
 )
     pruned_eids = Int[]
     motif_occ_counts = Dict{Int, Int}()
@@ -273,32 +340,115 @@ function prune_dead_occurrences!(
             continue
         end
 
-        W_eff = max(m.delta_right - m.delta_left, 0.05)
-        E_m = get(motif_occ_counts, occ.motif, 1)
-        tax_occam = log(max((T_max - W_eff) / W_eff, 1.0)) + log(max((E_m + 1.0) / gamma_m, 1e-3))
-
         N_e = sum(occ.counts; init=0)
         if N_e == 0
             push!(pruned_eids, eid)
             continue
         end
 
+        P = length(m.packets)
+        tau_min = max(0.0, -m.delta_left)
+        tau_max = max(tau_min, T_max - m.delta_right)
+        T_span = max(tau_max - tau_min, 1e-6)
+        A_m = sum(p.mass for p in m.packets; init=0.0)
+        null_mass = A_m * T_span
+
+        # 1. Evaluate Delta ln M(e) while spikes are currently assigned
         delta_ln_M = calc_marginal_log_evidence(
             m, occ.counts, occ.members, occ.tau, occ.u,
             spike_t, assign, bg_rates, active_mask;
             alpha_c=alpha_c, beta_c=beta_c
         )
 
-        if delta_ln_M <= tax_occam
+        # 2. Reference state: temporarily release member spikes back to background (D_bg ∪ S_e)
+        orig_assigns = [(s, assign[s]) for s in occ.members]
+        for (s, a) in orig_assigns
+            assign[s] = SpikeAssignment(0, 0)
+            if counts_bg !== nothing && a.packet_idx > 0 && a.packet_idx <= P
+                k = m.packets[a.packet_idx].channel
+                if k <= length(counts_bg)
+                    counts_bg[k] += 1
+                end
+            end
+        end
+
+        # 3. Recompute both W_m and q_sum(tau_e) on the post-removal pool (D_bg ∪ S_e)
+        W_m = 0.0
+        q_sum = 0.0
+        for p in 1:P
+            pkt = m.packets[p]
+            k = pkt.channel
+            lam0 = max(bg_rates[k], 1e-12)
+            w_p = pkt.mass / lam0
+            sig2 = pkt.var
+            sig = sqrt(sig2)
+            inv_2sig2 = 0.5 / sig2
+            norm_const = 1.0 / (sqrt(2pi) * sig)
+            t_pred = occ.tau + pkt.mu
+
+            if chan_to_spikes !== nothing
+                spks_k = chan_to_spikes[k]
+                N_spks_k = length(spks_k)
+                if N_spks_k > 0
+                    t_lo = t_pred - 4.0 * sig
+                    t_hi = t_pred + 4.0 * sig
+                    i_lo = searchsortedfirst(1:N_spks_k, t_lo, lt=(idx, target) -> spike_t[spks_k[idx]] < target)
+                    i_hi = searchsortedlast(1:N_spks_k, t_hi, lt=(target, idx) -> target < spike_t[spks_k[idx]])
+                    @inbounds for j in i_lo:i_hi
+                        s = spks_k[j]
+                        if assign[s].event_id == 0
+                            dt = spike_t[s] - t_pred
+                            N_j = exp(-dt * dt * inv_2sig2) * norm_const
+                            q_sum += w_p * N_j
+                        end
+                    end
+                end
+                N_bg_k = (counts_bg !== nothing && k <= length(counts_bg)) ? counts_bg[k] : count(s -> assign[s].event_id == 0, spks_k)
+                W_m += w_p * Float64(N_bg_k)
+            else
+                N_bg_k = occ.counts[p]
+                for (s, a) in orig_assigns
+                    if a.packet_idx == p
+                        dt = spike_t[s] - t_pred
+                        if abs(dt) <= 4.0 * sig
+                            N_j = exp(-dt * dt * inv_2sig2) * norm_const
+                            q_sum += w_p * N_j
+                        end
+                    end
+                end
+                W_m += w_p * Float64(N_bg_k)
+            end
+        end
+
+        denom_q = W_m + null_mass
+        q_birth = (q_sum + A_m) / max(denom_q, 1e-12)
+
+        y_m = evaluate_motif_log_intensity(ou_ctx, occ.motif, occ.tau)
+        T_eff_m = compute_effective_motif_duration(ou_ctx, occ.motif, tau_min, tau_max)
+
+        E_m = get(motif_occ_counts, occ.motif, 1)
+        ratio_E = Float64(E_m) / max(alpha_m + Float64(E_m) - 1.0, 1e-12)
+        ln_R_death = -delta_ln_M - y_m + log((beta_m + T_eff_m) * ratio_E * q_birth)
+
+        if log(rand(rng)) < min(0.0, ln_R_death)
+            # Stochastic acceptance of death: keep spikes released
             push!(pruned_eids, eid)
+            motif_occ_counts[occ.motif] -= 1
+        else
+            # Rejected death: restore original spike assignments
+            for (s, orig_a) in orig_assigns
+                assign[s] = orig_a
+                if counts_bg !== nothing && orig_a.packet_idx > 0 && orig_a.packet_idx <= P
+                    k = m.packets[orig_a.packet_idx].channel
+                    if k <= length(counts_bg)
+                        counts_bg[k] -= 1
+                    end
+                end
+            end
         end
     end
 
     for eid in pruned_eids
-        occ = occurrences[eid]
-        for spk_idx in occ.members
-            assign[spk_idx] = SpikeAssignment(0, 0)
-        end
         delete!(occurrences, eid)
     end
 
@@ -349,6 +499,8 @@ function detect_and_birth_occurrences!(
     R_max::Int;
     alpha_c::Float64=10.0,
     beta_c::Float64=10.0,
+    alpha_m::Float64=0.05,
+    beta_m::Float64=1.0,
     gamma_m::Float64=100.0,
     delta_margin::Float64=3.0,
     refractory_fraction::Float64=0.5,
@@ -358,6 +510,7 @@ function detect_and_birth_occurrences!(
     bg_times::Union{Nothing, Vector{Vector{Float64}}}=nothing,
     bg_indices::Union{Nothing, Vector{Vector{Int}}}=nothing,
     active_mask::Union{Nothing, BitVector}=nothing,
+    ou_ctx::Union{Nothing, ContinuousOUContext}=nothing,
     rng::AbstractRNG=Random.default_rng()
 )
     next_eid = isempty(occurrences) ? 1 : (maximum(keys(occurrences)) + 1)
@@ -394,15 +547,19 @@ function detect_and_birth_occurrences!(
 
     for (mid, m) in motifs
         P = length(m.packets)
-        P == 0 && continue
+        P < 2 && continue
         W_eff = max(m.delta_right - m.delta_left, 0.05)
+        tau_min = max(0.0, -m.delta_left)
+        tau_max = max(tau_min, T_max - m.delta_right)
+        T_span = max(tau_max - tau_min, 1e-6)
         total_mass = sum(p.mass for p in m.packets; init=0.0)
+        A_m = total_mass
+        null_mass = A_m * T_span
         E_m = count(occ -> occ.motif == mid, values(occurrences))
         sig_min = minimum(sqrt(p.var) for p in m.packets)
 
         prior_deficit = alpha_c * log(beta_c / (beta_c + total_mass))
-        tax_occam = log(max((T_max - W_eff) / W_eff, 1.0)) + log(max((E_m + 1.0) / gamma_m, 1e-3))
-        N_min = max(ceil(Int, (abs(prior_deficit) + tax_occam) / 3.5), 2)
+        N_min = 2
 
         W_mp = zeros(Float64, P)
         sum_snr = 0.0
@@ -418,68 +575,39 @@ function detect_and_birth_occurrences!(
         (W_m <= 0.0 || sum_snr <= 0.0) && continue
 
         cum_W = cumsum(W_mp)
+        denom_q = W_m + null_mass
+        eps_m = denom_q > 0.0 ? (null_mass / denom_q) : 1.0
 
         p_hit_1 = sum_snr / W_m
         L_m_star = max(ceil(Int, log(1.0 / alpha_stopping) / p_hit_1), 100)
         refract_dist = refractory_fraction * W_eff
-        tau_min = max(0.0, -m.delta_left)
-        tau_max = max(tau_min, T_max - m.delta_right)
 
         c_reject = 0
 
         while c_reject < L_m_star
-            u_draw = rand(rng) * W_m
-            p_star = searchsortedfirst(cum_W, u_draw)
-            p_star = clamp(p_star, 1, P)
-            pkt_star = m.packets[p_star]
-            k_star = pkt_star.channel
-            N_bg_star = length(times_bg[k_star])
-            if N_bg_star == 0
-                c_reject += 1
-                continue
-            end
-
-            i_star = rand(rng, 1:N_bg_star)
-            t_spk = times_bg[k_star][i_star]
-            sig_p_star = sqrt(pkt_star.var)
-            tau_seed = t_spk - pkt_star.mu + sig_p_star * randn(rng)
-
-            if (tau_seed < tau_min || tau_seed > tau_max)
-                c_reject += 1
-                continue
-            end
-
-            score = 0.0
-            hessian = 0.0
-            for p in 1:P
-                pkt = m.packets[p]
-                c = pkt.channel
-                spk_times_c = times_bg[c]
-                isempty(spk_times_c) && continue
-                sig2 = pkt.var
-                sig = sqrt(sig2)
-                lam0 = max(bg_rates[c], 1e-12)
-                w_p = pkt.mass / lam0
-                t_pred = tau_seed + pkt.mu
-                j_lo = searchsortedfirst(spk_times_c, t_pred - 3.5 * sig)
-                j_hi = searchsortedlast(spk_times_c, t_pred + 3.5 * sig)
-                j_lo > j_hi && continue
-                inv_2sig2 = 0.5 / sig2
-                norm_const = 1.0 / (sqrt(2pi) * sig)
-                for j in j_lo:j_hi
-                    dt = spk_times_c[j] - t_pred
-                    N_j = exp(-dt * dt * inv_2sig2) * norm_const
-                    ratio = w_p * N_j
-                    p_j = ratio / (1.0 + ratio)
-                    score += p_j * (dt / sig2)
-                    hessian -= p_j / sig2
+            if rand(rng) < eps_m
+                tau_star = rand(rng) * (tau_max - tau_min) + tau_min
+            else
+                u_draw = rand(rng) * W_m
+                p_star = clamp(searchsortedfirst(cum_W, u_draw), 1, P)
+                pkt_star = m.packets[p_star]
+                k_star = pkt_star.channel
+                N_bg_star = length(times_bg[k_star])
+                if N_bg_star == 0
+                    c_reject += 1
+                    continue
                 end
-            end
 
-            tau_star = tau_seed
-            if abs(hessian) > 1e-9
-                delta_tau = clamp(-score / hessian, -2.0 * sig_min, 2.0 * sig_min)
-                tau_star = clamp(tau_seed + delta_tau, tau_min, tau_max)
+                i_star = rand(rng, 1:N_bg_star)
+                t_spk = times_bg[k_star][i_star]
+                sig_p_star = sqrt(pkt_star.var)
+                tau_seed = t_spk - pkt_star.mu + sig_p_star * randn(rng)
+
+                if (tau_seed < tau_min || tau_seed > tau_max)
+                    c_reject += 1
+                    continue
+                end
+                tau_star = tau_seed
             end
 
             is_excluded = false
@@ -621,8 +749,13 @@ function detect_and_birth_occurrences!(
             scale_term = - Float64(N_cand) * log(beta_c + total_mass)
             delta_ln_M_star = kernel_sum + gamma_ratio + scale_term + prior_deficit
 
-            q_tau = max(q_sum / W_m, 1e-15)
-            ln_R = delta_ln_M_star - tax_occam - log(W_eff * q_tau)
+            q_birth = (q_sum + A_m) / max(denom_q, 1e-12)
+            y_m = evaluate_motif_log_intensity(ou_ctx, mid, tau_star)
+            T_eff_m = compute_effective_motif_duration(ou_ctx, mid, tau_min, tau_max)
+
+            # Forward jump: E_m -> E_m + 1
+            ratio_E = (Float64(E_m) + 1.0) / (alpha_m + Float64(E_m))
+            ln_R = delta_ln_M_star + y_m - log((beta_m + T_eff_m) * ratio_E * q_birth)
 
             incumbent_eid = 0
             min_dist = Inf
@@ -657,7 +790,6 @@ function detect_and_birth_occurrences!(
                     push!(intra_sweep_exclusion, (mid, tau_star))
                     n_birthed += 1
                     E_m += 1
-                    tax_occam = log(max((T_max - W_eff) / W_eff, 1.0)) + log(max((E_m + 1.0) / gamma_m, 1e-3))
 
                     c_reject = 0
 
@@ -678,8 +810,11 @@ function detect_and_birth_occurrences!(
                         W_mp[p] = (pkt.mass / lam0) * N_bg_k
                     end
                     W_m = sum(W_mp)
-                    W_m <= 0.0 && break
-                    cum_W = cumsum(W_mp)
+                    denom_q = W_m + null_mass
+                    eps_m = denom_q > 0.0 ? (null_mass / denom_q) : 1.0
+                    if W_m > 0.0
+                        cum_W = cumsum(W_mp)
+                    end
                 else
                     c_reject += 1
                 end

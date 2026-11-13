@@ -277,7 +277,7 @@ function sample_global_ard_precisions!(
     motifs::Vector{PurePacketMotif};
     rng::AbstractRNG=Random.default_rng()
 )
-    P_tot = sum(length(m.packets) for m in motifs)
+    P_tot = sum(length(m.packets) for m in motifs; init=0)
     a_post = state.a0 + 0.5 * P_tot
 
     for r in 1:length(state.active_mask)

@@ -301,3 +301,20 @@ struct AuditPacketInstance
     sigma::Float64
     mass::Float64
 end
+
+"""
+    exp_integral_segment(x1::Float64, x2::Float64, dt::Float64) -> Float64
+
+Analytical piecewise-linear exponential integral with Taylor safeguard:
+    int_0^dt exp(x1 + (s/dt)*(x2 - x1)) ds = dt * (exp(x2) - exp(x1)) / (x2 - x1)
+"""
+@inline function exp_integral_segment(x1::Float64, x2::Float64, dt::Float64)::Float64
+    dx = x2 - x1
+    if abs(dx) < 1e-4
+        factor = 1.0 + dx * (0.5 + dx * (1.0/6.0 + dx / 24.0))
+        return dt * exp(x1) * factor
+    else
+        return dt * (exp(x2) - exp(x1)) / dx
+    end
+end
+

@@ -306,6 +306,8 @@ function step_pure_packet_sweep!(
     beta_c::Float64=10.0,
     alpha_a::Float64=1.0,
     beta_a::Float64=1.0,
+    alpha_m::Float64=0.05,
+    beta_m::Float64=1.0,
     delta_margin::Float64=3.0,
     frozen_motif_ids::Set{Int}=Set{Int}(),
     allow_motif_birth::Bool=false,
@@ -318,15 +320,18 @@ function step_pure_packet_sweep!(
         occurrences, motifs, spike_t, spike_neuron, chan_to_spikes,
         assign, bg_rates, T_total, R_max;
         active_mask=ard_state.active_mask,
+        alpha_m=alpha_m, beta_m=beta_m,
         gamma_m=gamma_m, alpha_c=alpha_c, beta_c=beta_c, delta_margin=delta_margin,
         bg_times=bg_times, bg_indices=bg_indices,
-        rng=rng
+        ou_ctx=ou_ctx, rng=rng
     )
 
     # 2. Mechanism m=2: Marginal Negative Binomial Occurrence Pruning
     pruned_occ_ids = prune_dead_occurrences!(
         occurrences, motifs, spike_t, assign, bg_rates, T_total, ard_state.active_mask;
-        alpha_c=alpha_c, beta_c=beta_c, gamma_m=gamma_m
+        chan_to_spikes=chan_to_spikes, counts_bg=counts_bg,
+        alpha_c=alpha_c, beta_c=beta_c, alpha_m=alpha_m, beta_m=beta_m, gamma_m=gamma_m,
+        ou_ctx=ou_ctx, rng=rng
     )
     n_pruned = length(pruned_occ_ids)
 
@@ -337,7 +342,7 @@ function step_pure_packet_sweep!(
             motifs, occurrences, assign, spike_t, spike_neuron,
             bg_rates, T_total, length(ard_state.active_mask);
             N_channels=N_channels, occam_motif=nothing, gamma_motif=gamma_m,
-            alpha_a=alpha_a, beta_a=beta_a, counts_bg=counts_bg, rng=rng
+            alpha_a=alpha_a, beta_a=beta_a, alpha_m=alpha_m, beta_m=beta_m, counts_bg=counts_bg, rng=rng
         )
     end
 
@@ -478,15 +483,14 @@ function step_pure_packet_sweep!(
     end
 
     # 11b. Mechanism m=3: Reversible-Jump Pruning of Dead & Sub-Marginal Singleton Motifs
-    if sweep >= 3
-        pruned_mids = prune_dead_motifs!(
-            motifs, occurrences, frozen_motif_ids;
-            spike_t=spike_t, spike_neuron=spike_neuron, assign=assign,
-            bg_rates=bg_rates, counts_bg=counts_bg, active_mask=ard_state.active_mask,
-            gamma_motif=gamma_m, alpha_c=alpha_c, beta_c=beta_c, beta_a=beta_a,
-            sigma_prior=0.015, rng=rng
-        )
-    end
+    pruned_mids = prune_dead_motifs!(
+        motifs, occurrences, frozen_motif_ids;
+        spike_t=spike_t, spike_neuron=spike_neuron, assign=assign,
+        bg_rates=bg_rates, counts_bg=counts_bg, active_mask=ard_state.active_mask,
+        ou_ctx=ou_ctx, T_total=T_total,
+        gamma_motif=gamma_m, alpha_c=alpha_c, beta_c=beta_c, beta_a=beta_a,
+        alpha_m=alpha_m, beta_m=beta_m, sigma_prior=0.015, rng=rng
+    )
 
     # 12. Mechanism m=5 & m=0: Conjugate Triad Continuous Adaptation
     update_regional_ou!(ou_ctx, assign, spike_t, spike_neuron, bg_rates; max_iter=2)
@@ -559,6 +563,8 @@ function step_pure_packet_sweep!(
     beta_c::Float64=10.0,
     alpha_a::Float64=1.0,
     beta_a::Float64=1.0,
+    alpha_m::Float64=0.05,
+    beta_m::Float64=1.0,
     delta_margin::Float64=3.0,
     frozen_motif_ids::Set{Int}=Set{Int}(),
     allow_motif_birth::Bool=false,
@@ -574,7 +580,9 @@ function step_pure_packet_sweep!(
         data.T_total, model.R_max,
         t_bufs.tl_occ, t_bufs.tl_pkt, t_bufs.tl_logw, t_bufs.tl_rng;
         bg_times=b_bufs.bg_times, bg_indices=b_bufs.bg_indices,
-        gamma_m=gamma_m, alpha_c=alpha_c, beta_c=beta_c, delta_margin=delta_margin,
+        gamma_m=gamma_m, alpha_c=alpha_c, beta_c=beta_c,
+        alpha_a=alpha_a, beta_a=beta_a, alpha_m=alpha_m, beta_m=beta_m,
+        delta_margin=delta_margin,
         frozen_motif_ids=frozen_motif_ids, allow_motif_birth=allow_motif_birth,
         rng=rng
     )

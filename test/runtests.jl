@@ -469,8 +469,19 @@ end
         @test birthed >= 1
         @test length(occs_dict) == 1
         birthed_occ = first(values(occs_dict))
+        resample_occurrence_onset!(birthed_occ, m, trues(R_max); T_max=100.0, rng=rng)
         println("Birthed occurrence onset: ", round(birthed_occ.tau, digits=4), " s (True 42.000 s)")
         @test isapprox(birthed_occ.tau, 42.000, atol=0.015)
+
+        # Gibbs spike resampling under refined onset
+        buf_occ = Int[]; buf_pkt = Int[]; buf_logw = Float64[]
+        for spk_i in 1:N_total_spk
+            resample_spike_pure_packet!(
+                spk_i, spikes_t[spk_i], spikes_chan[spk_i],
+                assign, values(occs_dict), occs_dict, motifs_dict, bg_rates, trues(R_max),
+                buf_occ, buf_pkt, buf_logw; rng=rng
+            )
+        end
         @test sum(birthed_occ.counts) >= 10
         @test birthed_occ.amplitude > 0.8
 
@@ -537,6 +548,7 @@ end
         @test overwrote_2 >= 1
         @test haskey(occs_dict, zombie_eid)
         overwritten_occ = occs_dict[zombie_eid]
+        resample_occurrence_onset!(overwritten_occ, m, trues(R_max); T_max=100.0, rng=rng)
         println("Overwritten occurrence onset: ", round(overwritten_occ.tau, digits=4), " s (True 60.120 s)")
         @test isapprox(overwritten_occ.tau, 60.120, atol=0.015)
         # Verify latent coordinates cleanly reset to 0.0 (Safeguard 3)
@@ -1165,8 +1177,9 @@ end
         R_max = 2
 
         # Initialize with 1 existing motif
-        p0 = Packet(1, 1, 0.0, 0.0002, 1.0)
-        m1 = PurePacketMotif(1, [p0], R_max, N_chans; W_window=0.50)
+        p0a = Packet(1, 1, 0.00, 0.0002, 1.0)
+        p0b = Packet(2, 2, 0.05, 0.0002, 1.0)
+        m1 = PurePacketMotif(1, [p0a, p0b], R_max, N_chans; W_window=0.50)
         motifs = Dict{Int, PurePacketMotif}(1 => m1)
         occurrences = Dict{Int, PureOccurrence}()
 
@@ -1234,12 +1247,13 @@ end
         # Setup: Motif 1 (active with 1 occ), Motif 2 (now delete its occ -> 0 occ), Motif 3 (0 occ)
         empty!(occurrences)
         # Create an occurrence for Motif 1 only
-        occ1 = PureOccurrence(1, 1, 1.0, R_max, 1; amplitude=1.0)
+        occ1 = PureOccurrence(1, 1, 1.0, R_max, 2; amplitude=1.0)
         occurrences[1] = occ1
 
         # Add a dummy Motif 3
-        p3 = Packet(1, 3, 0.0, 0.0002, 1.0)
-        motifs[3] = PurePacketMotif(3, [p3], R_max, N_chans; W_window=0.50)
+        p3a = Packet(1, 3, 0.00, 0.0002, 1.0)
+        p3b = Packet(2, 4, 0.05, 0.0002, 1.0)
+        motifs[3] = PurePacketMotif(3, [p3a, p3b], R_max, N_chans; W_window=0.50)
 
         # Motifs at this point:
         # Motif 1: 1 occurrence
