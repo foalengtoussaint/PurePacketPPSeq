@@ -483,19 +483,6 @@ function prune_dead_motifs!(
                 tax_per_pkt = log(W_eff / (sqrt(2π) * sigma_prior)) + log(beta_a + 1.0)
                 tax_dict = max(0.0, tax_crp) + P_m * tax_per_pkt
 
-                # Guard 2 & 3: Evaluate exact combinatorial model prior and centroid
-                # marginalization factor across all E_m >= 1 on reference pool D_bg ∪ S_{anchor}.
-                anchor_occ = occs[1]
-                reach = max(W_eff, 0.75)
-                K_cand = count_candidate_clusters_in_window(
-                    spike_t, spike_neuron, assign, anchor_occ.tau, reach, T_total, sigma_prior, anchor_occ.id
-                )
-                if K_cand < P_m
-                    continue # Reversibility guard: single-step birth unreachable (alpha_death = 0)
-                end
-                log_comb = loggamma(K_cand + 1) - loggamma(P_m + 1) - loggamma(K_cand - P_m + 1)
-
-                # Centroid shrinkage tax across all assigned spikes N_p = sum_e n_{e,p}
                 centroid_tax = 0.5 * sum(
                     begin
                         N_p = sum(occ.counts[p] for occ in occs; init=0)
@@ -503,7 +490,26 @@ function prune_dead_motifs!(
                     end
                     for p in 1:P_m
                 )
-                tax_dict += log_comb + centroid_tax
+
+                if E_m == 1
+                    # Guard 2 & 3: Evaluate exact combinatorial model prior and centroid
+                    # marginalization factor across singleton E_m == 1 on reference pool D_bg ∪ S_{anchor}.
+                    anchor_occ = occs[1]
+                    reach = max(W_eff, 0.75)
+                    K_cand = count_candidate_clusters_in_window(
+                        spike_t, spike_neuron, assign, anchor_occ.tau, reach, T_total, sigma_prior, anchor_occ.id
+                    )
+                    if K_cand < P_m
+                        continue # Reversibility guard: single-step birth unreachable (alpha_death = 0)
+                    end
+                    log_comb = loggamma(K_cand + 1) - loggamma(P_m + 1) - loggamma(K_cand - P_m + 1)
+                    tax_dict += log_comb + centroid_tax
+                else
+                    # E_m >= 2: Exact generative dictionary prior matching Level m=1 packet discovery
+                    N_chans = (bg_rates !== nothing) ? length(bg_rates) : length(m.chan_to_packets)
+                    tax_chan = P_m * log(Float64(max(1, N_chans)))
+                    tax_dict += tax_chan + centroid_tax
+                end
 
                 n_tot_occ_spk = sum(length(occ.members) for occ in occs)
                 log_q_ratio = log(max(1.0, Float64(n_tot_occ_spk)) * Float64(n_candidates) / Float64(n_bg_spikes + n_tot_occ_spk))

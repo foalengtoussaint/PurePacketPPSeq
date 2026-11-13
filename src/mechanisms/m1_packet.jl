@@ -190,23 +190,25 @@ function prune_dead_packets!(
         survivors_tentative = [q for q in 1:P if q != p]
         isempty(survivors_tentative) && continue
 
-        # 1. Survivor Support Envelope: S_m(P_m \ {p})
+        # 1. Physical Survivor Support Envelope: S_m(P_m \ {p})
         min_surv_mu = minimum(m.packets[q].mu for q in survivors_tentative)
         max_surv_mu = maximum(m.packets[q].mu for q in survivors_tentative)
-        delta_reach = max(3.0 * sigma_prior, 0.25)
-        surv_left = minimum(m.packets[q].mu - 4.0 * sqrt(m.packets[q].var) for q in survivors_tentative) - delta_reach
-        surv_right = maximum(m.packets[q].mu + 4.0 * sqrt(m.packets[q].var) for q in survivors_tentative) + delta_reach
-        proposal_support = max(surv_right - surv_left, 2.0 * delta_reach)
+        surv_left = minimum(m.packets[q].mu - 4.0 * sqrt(m.packets[q].var) for q in survivors_tentative)
+        surv_right = maximum(m.packets[q].mu + 4.0 * sqrt(m.packets[q].var) for q in survivors_tentative)
+        proposal_support = max(surv_right - surv_left, 6.0 * sigma_prior)
 
-        curr_left = minimum(m.packets[q].mu - 4.0 * sqrt(m.packets[q].var) for q in 1:P) - delta_reach
-        curr_right = maximum(m.packets[q].mu + 4.0 * sqrt(m.packets[q].var) for q in 1:P) + delta_reach
-        proposal_support_curr = max(curr_right - curr_left, 2.0 * delta_reach)
+        curr_left = minimum(m.packets[q].mu - 4.0 * sqrt(m.packets[q].var) for q in 1:P)
+        curr_right = maximum(m.packets[q].mu + 4.0 * sqrt(m.packets[q].var) for q in 1:P)
+        proposal_support_curr = max(curr_right - curr_left, 6.0 * sigma_prior)
 
         # 2. Single-Step Reversibility Guard:
-        # If mu_p is outside surv_left..surv_right, a single birth proposal on the survivors
-        # could never reach mu_p. Detailed balance reversibility requires q(birth) = 0 => alpha_death = 0.
+        # If mu_p is outside surv_left..surv_right enlarged by search reach delta_reach,
+        # a single birth proposal on the survivors could never reach mu_p.
+        delta_reach = max(3.0 * sigma_prior, 0.25)
+        search_left = surv_left - delta_reach
+        search_right = surv_right + delta_reach
         is_extremal = (pkt.mu < min_surv_mu) || (pkt.mu > max_surv_mu)
-        if is_extremal && (pkt.mu < surv_left || pkt.mu > surv_right)
+        if is_extremal && (pkt.mu < search_left || pkt.mu > search_right)
             continue
         end
 
@@ -215,7 +217,7 @@ function prune_dead_packets!(
             continue
         end
 
-        # 3. Continuous Parameter Occam Volume Tax on Survivor Support with Contraction Bonus
+        # 3. Continuous Parameter Occam Volume Tax on Survivor Support with Contraction Bonus and Channel Prior
         tax_loadings = 0.0
         if active_mask !== nothing && ard_alphas !== nothing
             for r in 1:min(length(active_mask), length(ard_alphas))
@@ -230,7 +232,8 @@ function prune_dead_packets!(
         if proposal_support_curr > proposal_support && proposal_support > 0.0
             tax_contraction = Float64(P - 1) * log(proposal_support_curr / proposal_support)
         end
-        tax_occam = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_contraction
+        tax_chan = log(Float64(max(1, N_channels)))
+        tax_occam = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_chan + tax_contraction
 
         # 4. Evaluate Gamma-Marginalized Log-Evidence Delta ln M_p
         llr_p = 0.0
@@ -432,9 +435,12 @@ function detect_and_birth_or_split_packets!(
     end
 
     delta_reach = max(3.0 * sigma_prior, 0.25)
-    curr_left = isempty(m.packets) ? (m.delta_left - delta_reach) : (minimum(m.packets[q].mu - 4.0 * sqrt(m.packets[q].var) for q in 1:length(m.packets)) - delta_reach)
-    curr_right = isempty(m.packets) ? (m.delta_right + delta_reach) : (maximum(m.packets[q].mu + 4.0 * sqrt(m.packets[q].var) for q in 1:length(m.packets)) + delta_reach)
-    proposal_support = max(curr_right - curr_left, 2.0 * delta_reach)
+    env_left = isempty(m.packets) ? m.delta_left : minimum(m.packets[q].mu - 4.0 * sqrt(m.packets[q].var) for q in 1:length(m.packets))
+    env_right = isempty(m.packets) ? m.delta_right : maximum(m.packets[q].mu + 4.0 * sqrt(m.packets[q].var) for q in 1:length(m.packets))
+    proposal_support = max(env_right - env_left, 6.0 * sigma_prior)
+    s_left = env_left - delta_reach
+    s_right = env_right + delta_reach
+    tax_chan = log(Float64(max(1, N_channels)))
 
     # 1. Bimodal Packet Split (Evaluated on Assigned Spikes S_p)
     if allow_multi_packets && !isempty(m.packets)
@@ -477,7 +483,7 @@ function detect_and_birth_or_split_packets!(
                 spk_sorted = split_spk_indices[sort_idx]
 
                 split_span = max(cand_sorted[end] - cand_sorted[1], 4.0 * sigma_prior)
-                occam_split = log(split_span / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings
+                occam_split = log(split_span / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_chan
 
                 lam0 = bg_rates[chan]
                 best_split_llr = -Inf
@@ -560,9 +566,9 @@ function detect_and_birth_or_split_packets!(
                     unimodal_overlap && continue
 
                     # Existing-Packet Envelope Dilution Tax on Split
-                    new_left = min(curr_left, (mu_refined - 4.0 * sigma_prior) - delta_reach)
-                    new_right = max(curr_right, (mu_refined + 4.0 * sigma_prior) + delta_reach)
-                    new_proposal_support = max(new_right - new_left, 2.0 * delta_reach)
+                    new_env_left = min(env_left, mu_refined - 4.0 * sigma_prior)
+                    new_env_right = max(env_right, mu_refined + 4.0 * sigma_prior)
+                    new_proposal_support = max(new_env_right - new_env_left, 6.0 * sigma_prior)
                     tax_dilation = 0.0
                     if new_proposal_support > proposal_support && proposal_support > 0.0
                         tax_dilation = Float64(P_curr) * log(new_proposal_support / proposal_support)
@@ -604,9 +610,11 @@ function detect_and_birth_or_split_packets!(
 
                     update_motif_bounds!(m; bg_rates=bg_rates)
                     birthed_any = true
-                    curr_left = new_left
-                    curr_right = new_right
+                    env_left = new_env_left
+                    env_right = new_env_right
                     proposal_support = new_proposal_support
+                    s_left = env_left - delta_reach
+                    s_right = env_right + delta_reach
                     break
                 end
             end
@@ -614,11 +622,11 @@ function detect_and_birth_or_split_packets!(
     end
 
     # 2. Background Packet Birth (Evaluated on Unassigned Spikes)
-    s_left = curr_left
-    s_right = curr_right
-    proposal_support = max(s_right - s_left, 2.0 * delta_reach)
+    proposal_support = max(env_right - env_left, 6.0 * sigma_prior)
+    s_left = env_left - delta_reach
+    s_right = env_right + delta_reach
 
-    occam_birth = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings
+    occam_birth = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_chan
 
     chan_cand_times = [Float64[] for _ in 1:N_channels]
     chan_cand_spks = [Int[] for _ in 1:N_channels]
@@ -749,9 +757,9 @@ function detect_and_birth_or_split_packets!(
             unimodal_overlap && continue
 
             # Existing-Packet Envelope Dilution Tax on Birth
-            new_left = min(curr_left, (mu_refined - 4.0 * sigma_prior) - delta_reach)
-            new_right = max(curr_right, (mu_refined + 4.0 * sigma_prior) + delta_reach)
-            new_proposal_support = max(new_right - new_left, 2.0 * delta_reach)
+            new_env_left = min(env_left, mu_refined - 4.0 * sigma_prior)
+            new_env_right = max(env_right, mu_refined + 4.0 * sigma_prior)
+            new_proposal_support = max(new_env_right - new_env_left, 6.0 * sigma_prior)
             tax_dilation = 0.0
             P_curr = length(m.packets)
             if new_proposal_support > proposal_support && proposal_support > 0.0
@@ -813,10 +821,12 @@ function detect_and_birth_or_split_packets!(
 
             new_pkt.mass = max((alpha_a + Float64(harvested_count)) / (beta_a + E_eff), 0.05)
             birthed_any = true
-            curr_left = new_left
-            curr_right = new_right
+            env_left = new_env_left
+            env_right = new_env_right
             proposal_support = new_proposal_support
-            occam_birth = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings
+            s_left = env_left - delta_reach
+            s_right = env_right + delta_reach
+            occam_birth = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_chan
         end
     end
 

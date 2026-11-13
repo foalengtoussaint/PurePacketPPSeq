@@ -51,12 +51,9 @@ println("=================================================================")
         # Calculate Survivor Support Envelope |S_m(survivors)|
         min_surv = minimum(p.mu for p in m.packets)
         max_surv = maximum(p.mu for p in m.packets)
-        delta_reach = max(3.0 * sigma_prior, 0.25)
-        surv_left = min_surv - delta_reach
-        surv_right = max_surv + delta_reach
-        proposal_support = max(surv_right - surv_left, 2.0 * delta_reach)
+        proposal_support = max(max_surv - min_surv, 6.0 * sigma_prior)
         
-        tax_occam_p = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m)
+        tax_occam_p = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + log(Float64(N_chans))
         
         # Synthetic spike observations across occurrences
         cand_dt = [0.001 * randn(rng) for _ in 1:E_m]
