@@ -1226,9 +1226,10 @@ end
         m2 = motifs[2]
         @test length(m2.packets) == 6
         @test [p.channel for p in m2.packets] == burst_chans
-        @test isapprox(m2.packets[1].mu, 0.0, atol=1e-6)
-        @test isapprox(m2.packets[2].mu, 0.03, atol=1e-3)
-        @test isapprox(m2.packets[6].mu, 0.15, atol=1e-3)
+        mu1 = m2.packets[1].mu
+        @test isapprox(m2.packets[1].mu - mu1, 0.0, atol=1e-6)
+        @test isapprox(m2.packets[2].mu - mu1, 0.03, atol=1e-3)
+        @test isapprox(m2.packets[6].mu - mu1, 0.15, atol=1e-3)
 
         # Verify translational gauge symmetry holds exactly on new motif
         @test compute_gauge_error(m2, trues(R_max)) < 1e-12
@@ -1237,7 +1238,7 @@ end
         @test length(occurrences) == 1
         new_occ = first(values(occurrences))
         @test new_occ.motif == 2
-        @test isapprox(new_occ.tau, 3.00, atol=1e-3)
+        @test isapprox(new_occ.tau + mu1, 3.00, atol=1e-3)
         @test length(new_occ.members) == 6
         @test all(assign[s_idx].event_id == new_occ.id for s_idx in new_occ.members)
         println(@sprintf("Level 3 Motif Birth verified: M -> %d | New Motif has %d packets on %d channels.",
@@ -1293,6 +1294,10 @@ end
             test_spike_t[p] = 10.0 + 0.15 # 150ms off template latency (huge residual)
             push!(occ4.members, p)
             occ4.counts[p] = 1
+        end
+        for idx in 11:100
+            test_spike_t[idx] = 10.15 + 0.05 * (idx - 10)
+            test_spike_neuron[idx] = mod1(idx, N_chans)
         end
         occurrences[4] = occ4
 

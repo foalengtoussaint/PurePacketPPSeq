@@ -372,6 +372,14 @@ function prune_dead_occurrences!(
             end
         end
 
+        # Symmetric Scale n=1 Sequence Boundary: Occurrences must span >= 2 distinct packets
+        n_active_pkts = count(c -> c > 0, occ.counts)
+        if n_active_pkts < 2
+            push!(pruned_eids, eid)
+            motif_occ_counts[occ.motif] -= 1
+            continue
+        end
+
         # 3. Recompute both W_m and q_sum(tau_e) on the post-removal pool (D_bg ∪ S_e)
         W_m = 0.0
         q_sum = 0.0
@@ -675,7 +683,8 @@ function detect_and_birth_occurrences!(
             end
 
             N_cand = length(cand_spk_indices)
-            if N_cand < N_min
+            n_active_pkts = length(unique(cand_pkt_indices))
+            if N_cand < N_min || n_active_pkts < 2
                 c_reject += 1
                 continue
             end

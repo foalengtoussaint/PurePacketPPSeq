@@ -342,7 +342,8 @@ function step_pure_packet_sweep!(
             motifs, occurrences, assign, spike_t, spike_neuron,
             bg_rates, T_total, length(ard_state.active_mask);
             N_channels=N_channels, occam_motif=nothing, gamma_motif=gamma_m,
-            alpha_a=alpha_a, beta_a=beta_a, alpha_m=alpha_m, beta_m=beta_m, counts_bg=counts_bg, rng=rng
+            alpha_a=alpha_a, beta_a=beta_a, alpha_m=alpha_m, beta_m=beta_m,
+            counts_bg=counts_bg, ou_ctx=ou_ctx, rng=rng
         )
     end
 

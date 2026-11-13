@@ -12,6 +12,7 @@ using Random
 using Statistics
 using Distributions
 using Printf
+using SpecialFunctions: loggamma
 
 println("=================================================================")
 println("STARTING AXIOMATIC INVARIANT VERIFICATION SUITE")
@@ -83,6 +84,7 @@ println("=================================================================")
 
         # Sub-test 1B: Level m=3 Motif Archetype Birth / Death Jump Pair
         P_new = 12
+        K_cand = 25
         W_window = 0.40
         gamma_motif = 100.0
         E_total = 500
@@ -93,7 +95,9 @@ println("=================================================================")
         tax_crp = log(Float64(E_total) / gamma_motif)
         tax_per_pkt = log(W_window / (sqrt(2π) * sigma_prior)) + log(beta_a + 1.0)
         tax_e0 = log((beta_m_val + T_total_val) / max(W_window, 1e-6)) + log(1.0 / alpha_m_val)
-        tax_occam_motif = tax_crp + P_new * tax_per_pkt + tax_e0
+        tax_comb = loggamma(K_cand + 1) - loggamma(P_new + 1) - loggamma(K_cand - P_new + 1)
+        centroid_tax = 0.5 * P_new * log(1.0) # n_p = 1 single spike per packet in benchmark
+        tax_occam_motif = tax_crp + P_new * tax_per_pkt + tax_e0 + tax_comb + centroid_tax
         
         # Synthetic burst evidence
         burst_llr = 0.0

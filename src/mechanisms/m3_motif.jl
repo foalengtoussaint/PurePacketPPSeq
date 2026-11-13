@@ -96,9 +96,9 @@ function detect_and_birth_new_motifs!(
     T_total::Float64,
     R_current::Int;
     N_channels::Int=411,
-    W_window::Float64=0.40,
-    min_channels::Int=5,
-    min_spikes::Int=8,
+    W_reach::Float64=0.75,
+    min_packets::Int=2,
+    min_spikes::Int=2,
     K_candidates::Int=30,
     occam_motif::Union{Float64, Nothing}=nothing,
     gamma_motif::Float64=100.0,
@@ -107,10 +107,17 @@ function detect_and_birth_new_motifs!(
     alpha_m::Float64=0.05,
     beta_m::Float64=1.0,
     counts_bg::Union{Vector{Int}, Nothing}=nothing,
-    rng::AbstractRNG=Random.default_rng()
+    ou_ctx::Union{Nothing, ContinuousOUContext}=nothing,
+    rng::AbstractRNG=Random.default_rng(),
+    W_window::Union{Nothing, Float64}=nothing,
+    min_channels::Union{Nothing, Int}=nothing
 )::Int
     N_spikes = length(spike_t)
     N_spikes < min_spikes && return 0
+
+    reach = W_window !== nothing ? W_window : W_reach
+    req_chans = min_channels !== nothing ? min_channels : 1
+    req_pkts = max(min_packets, 2)
 
     bg_spike_indices = Int[]
     sizehint!(bg_spike_indices, 128)
@@ -125,101 +132,231 @@ function detect_and_birth_new_motifs!(
     n_motifs_birthed = 0
     sigma_prior = 0.015
     var_prior = sigma_prior^2
+    delta_t_sep = 2.0 * sqrt(2.0) * sigma_prior # Rayleigh packet separation limit (~42.4 ms)
 
     for anchor_idx in bg_spike_indices
-        t_anchor = spike_t[anchor_idx]
-        t_start = max(0.0, t_anchor - 0.05)
-        t_end = min(t_start + W_window, T_total)
-        (t_end - t_start) < 0.10 && continue
+        t_seed = spike_t[anchor_idx]
+        t_start = max(0.0, t_seed - reach)
+        t_end = min(t_seed + reach, T_total)
+        (t_end - t_start) < delta_t_sep && continue
 
         i_start = searchsortedfirst(spike_t, t_start)
         i_stop = searchsortedlast(spike_t, t_end)
 
-        cand_spikes = Int[]
-        cand_chans = Set{Int}()
+        # Collect unassigned background spikes by channel
+        chan_spk = Dict{Int, Vector{Int}}()
         for idx in i_start:i_stop
             if assign[idx].event_id == 0
-                push!(cand_spikes, idx)
-                push!(cand_chans, spike_neuron[idx])
+                c = spike_neuron[idx]
+                push!(get!(chan_spk, c, Int[]), idx)
             end
         end
 
-        if length(cand_chans) < min_channels || length(cand_spikes) < min_spikes
-            continue
-        end
+        isempty(chan_spk) && continue
 
-        chan_first_t = Dict{Int, Float64}()
-        chan_spk_map = Dict{Int, Int}()
-        for idx in cand_spikes
-            c = spike_neuron[idx]
-            dt = spike_t[idx] - t_start
-            if !haskey(chan_first_t, c) || dt < chan_first_t[c]
-                chan_first_t[c] = dt
-                chan_spk_map[c] = idx
+        # Rayleigh clustering per channel into candidate packets
+        cand_pkts = @NamedTuple{chan::Int, spikes::Vector{Int}, mu::Float64, a_post::Float64, llr::Float64, net_evidence::Float64}[]
+
+        for (c, spk_list) in chan_spk
+            sort!(spk_list, by=s -> spike_t[s])
+            
+            clusters = Vector{Int}[]
+            curr_cluster = Int[spk_list[1]]
+            for j in 2:length(spk_list)
+                if spike_t[spk_list[j]] - spike_t[spk_list[j-1]] <= delta_t_sep
+                    push!(curr_cluster, spk_list[j])
+                else
+                    push!(clusters, curr_cluster)
+                    curr_cluster = Int[spk_list[j]]
+                end
+            end
+            push!(clusters, curr_cluster)
+
+            for cl in clusters
+                n_cl = length(cl)
+                t_bar = sum(spike_t[s] for s in cl) / Float64(n_cl)
+                mu_p = t_bar - t_seed
+
+                # Negative Binomial log-evidence against instantaneous OU null
+                sum_w = 0.0
+                for s in cl
+                    dt = spike_t[s] - t_bar
+                    sum_w += exp(-0.5 * (dt * dt) / var_prior)
+                end
+                a_post = (alpha_a + sum_w) / (beta_a + 1.0)
+
+                llr_p = 0.0
+                for s in cl
+                    t_s = spike_t[s]
+                    dt = t_s - t_bar
+                    lam_s = if ou_ctx !== nothing
+                        exp(evaluate_background_log_intensity(ou_ctx, bg_rates, c, t_s))
+                    else
+                        (c <= length(bg_rates)) ? max(bg_rates[c], 1e-12) : 0.5
+                    end
+                    bump = a_post * exp(-0.5 * (dt * dt) / var_prior) / (sqrt(2π) * sigma_prior)
+                    llr_p += log(max(bump / lam_s, 1.0))
+                end
+                # Exact Centroid Latency Marginalization Factor: -0.5 * ln(n_p)
+                llr_p -= 0.5 * log(Float64(n_cl))
+
+                net_ev = llr_p - log(beta_a + 1.0)
+                push!(cand_pkts, (chan=c, spikes=cl, mu=mu_p, a_post=a_post, llr=llr_p, net_evidence=net_ev))
             end
         end
 
-        sorted_chans = sort(collect(keys(chan_first_t)), by=c -> chan_first_t[c])
-        origin_t = chan_first_t[sorted_chans[1]]
+        length(cand_pkts) < req_pkts && continue
+        K_cand = length(cand_pkts)
 
-        pkts = Packet[
-            Packet(
-                p, c,
-                chan_first_t[c] - origin_t,
-                var_prior,
-                1.0
-            )
-            for (p, c) in enumerate(sorted_chans)
-        ]
+        # Sort candidate packets by descending net log-evidence
+        sort!(cand_pkts, by=p -> p.net_evidence, rev=true)
 
-        llr = 0.0
-        for (p, c) in enumerate(sorted_chans)
-            lam0 = (c <= length(bg_rates)) ? max(bg_rates[c], 1e-12) : 0.5
-            N_j = 1.0 / (sqrt(2π) * sigma_prior)
-            ratio = (1.0 * N_j) / lam0
-            llr += log(max(ratio, 1.0))
+        # Prefix search maximizing joint net log-evidence under dynamic envelope
+        best_k = 0
+        best_E_net = -Inf
+        best_pkts = Packet[]
+        best_tax_total = 0.0
+        best_llr_sum = 0.0
+
+        E_total = length(occurrences)
+        tax_crp = log(max(1.0, Float64(E_total)) / max(1e-6, gamma_motif))
+
+        max_prefix = min(K_cand, 50)
+        for k in req_pkts:max_prefix
+            prefix = cand_pkts[1:k]
+            if req_chans > 1
+                n_distinct = length(Set(p.chan for p in prefix))
+                n_distinct < req_chans && continue
+            end
+
+            # Construct temporary packets to compute exact envelope via update_motif_bounds!
+            pkts_cand = [
+                Packet(p, prefix[p].chan, prefix[p].mu, var_prior, prefix[p].a_post)
+                for p in 1:k
+            ]
+            temp_m = PurePacketMotif(0, pkts_cand, R_current, N_channels)
+            update_motif_bounds!(temp_m; bg_rates=bg_rates)
+
+            W_eff = max(temp_m.W_window, 6.0 * sigma_prior)
+            tax_per_pkt = log(W_eff / (sqrt(2π) * sigma_prior)) + log(beta_a + 1.0)
+            tax_dict = max(0.0, tax_crp) + k * tax_per_pkt
+            tax_e0 = log((beta_m + T_total) / max(W_eff, 1e-6)) + log(1.0 / alpha_m)
+
+            # Exact Combinatorial Model Selection Prior: ln \binom{K_cand}{k}
+            log_comb = loggamma(K_cand + 1) - loggamma(k + 1) - loggamma(K_cand - k + 1)
+            tax_total = occam_motif !== nothing ? occam_motif : (tax_dict + tax_e0 + log_comb)
+
+            llr_sum = sum(prefix[p].llr for p in 1:k)
+            E_net = llr_sum - tax_total
+
+            if E_net > best_E_net
+                best_E_net = E_net
+                best_k = k
+                best_pkts = pkts_cand
+                best_tax_total = tax_total
+                best_llr_sum = llr_sum
+            end
         end
 
-        # Exact P_new-Packet Occam Volume Tax + CRP Motif Table Prior + Seed Occurrence Tax:
-        # Tax_Occam = ln(E / gamma_motif) + \sum_{p=1}^{P_new} [ ln(|S_m| / (sqrt(2pi)*sigma_prior)) + ln(beta_a + 1) ] + Tax_Occam(e_0)
-        P_new = length(sorted_chans)
-        tax_crp = log(max(1.0, Float64(length(occurrences))) / max(1e-6, gamma_motif))
-        tax_per_pkt = log(W_window / (sqrt(2π) * sigma_prior)) + log(beta_a + 1.0)
-        tax_e0 = log((beta_m + T_total) / max(W_window, 1e-6)) + log(1.0 / alpha_m)
-        tax_occam = max(0.0, tax_crp) + P_new * tax_per_pkt + tax_e0
-        threshold = occam_motif !== nothing ? occam_motif : tax_occam
+        if best_k >= req_pkts && best_E_net > 0.0
+            # Sort final chosen prefix packets chronologically by canonical latency mu_p
+            sort!(best_pkts, by=p -> p.mu)
+            for (new_p, pkt) in enumerate(best_pkts)
+                pkt.id = new_p
+            end
 
-        if llr > threshold
+            # Accept birth of new motif
             new_mid = maximum(keys(motifs); init=0) + 1
-            new_motif = PurePacketMotif(new_mid, pkts, R_current, N_channels; W_window=W_window)
+            new_motif = PurePacketMotif(new_mid, best_pkts, R_current, N_channels)
             project_translational_gauge!(new_motif, trues(R_current))
             update_motif_bounds!(new_motif; bg_rates=bg_rates)
             motifs[new_mid] = new_motif
 
             next_eid = isempty(occurrences) ? 1 : (maximum(keys(occurrences)) + 1)
-            tau_new = t_start + origin_t
-            new_occ = PureOccurrence(next_eid, new_mid, tau_new, R_current, length(pkts); amplitude=1.0)
+            tau_new = t_seed
+            new_occ = PureOccurrence(next_eid, new_mid, tau_new, R_current, length(best_pkts); amplitude=1.0)
 
-            for (p, c) in enumerate(sorted_chans)
-                s_idx = chan_spk_map[c]
-                assign[s_idx] = SpikeAssignment(next_eid, p)
-                push!(new_occ.members, s_idx)
-                new_occ.counts[p] = 1
-                new_occ.sum_t[p] = spike_t[s_idx]
-                new_occ.sum_t2[p] = spike_t[s_idx]^2
-                if counts_bg !== nothing
-                    counts_bg[c] = max(0, counts_bg[c] - 1)
+            # Map candidate clusters to their new canonical packet indices
+            pkt_id_map = Dict{Int, Int}()
+            for (new_p, pkt) in enumerate(best_pkts)
+                # Find matching cluster in cand_pkts
+                for orig_p in 1:best_k
+                    if cand_pkts[orig_p].chan == pkt.channel && isapprox(cand_pkts[orig_p].mu, pkt.mu, atol=1e-6)
+                        pkt_id_map[orig_p] = new_p
+                        break
+                    end
+                end
+            end
+
+            for orig_p in 1:best_k
+                new_p = get(pkt_id_map, orig_p, orig_p)
+                for s_idx in cand_pkts[orig_p].spikes
+                    assign[s_idx] = SpikeAssignment(next_eid, new_p)
+                    push!(new_occ.members, s_idx)
+                    new_occ.counts[new_p] += 1
+                    new_occ.sum_t[new_p] += spike_t[s_idx]
+                    new_occ.sum_t2[new_p] += spike_t[s_idx]^2
+                    c = cand_pkts[orig_p].chan
+                    if counts_bg !== nothing && 1 <= c <= length(counts_bg)
+                        counts_bg[c] = max(0, counts_bg[c] - 1)
+                    end
                 end
             end
             occurrences[next_eid] = new_occ
             n_motifs_birthed += 1
-            println(@sprintf("   --> [Level 3 Motif Birthed] Motif ID: %d | Packets: %d across %d units | Onset: %.2fs (LLR: %.1f > Tax: %.1f)",
-                    new_mid, length(pkts), length(sorted_chans), tau_new, llr, threshold))
+            n_units = length(Set(p.channel for p in best_pkts))
+            println(@sprintf("   --> [Level 3 Motif Birthed] Motif ID: %d | Packets: %d across %d units | Tau: %.2fs | Span: %.1fms (LLR: %.1f > Tax: %.1f, Net: +%.1f)",
+                    new_mid, length(best_pkts), n_units, tau_new, new_motif.W_window * 1000.0, best_llr_sum, best_tax_total, best_E_net))
             break
         end
     end
 
     return n_motifs_birthed
+end
+
+"""
+    count_candidate_clusters_in_window(spike_t, spike_neuron, assign, tau_seed, reach, T_total, sigma_prior, target_eid) -> Int
+
+Reconstructs the candidate micro-cluster pool K_cand around tau_seed on D_bg ∪ S_{target_eid} using the exact Rayleigh separation limit.
+"""
+function count_candidate_clusters_in_window(
+    spike_t::Vector{Float64},
+    spike_neuron::Vector{Int},
+    assign::Vector{SpikeAssignment},
+    tau_seed::Float64,
+    reach::Float64,
+    T_total::Float64,
+    sigma_prior::Float64,
+    target_eid::Int=0
+)::Int
+    t_start = max(0.0, tau_seed - reach)
+    t_end = min(tau_seed + reach, T_total)
+    delta_t_sep = 2.0 * sqrt(2.0) * sigma_prior
+
+    i_start = searchsortedfirst(spike_t, t_start)
+    i_stop = searchsortedlast(spike_t, t_end)
+
+    chan_spk = Dict{Int, Vector{Float64}}()
+    for idx in i_start:i_stop
+        as = assign[idx]
+        if as.event_id == 0 || as.event_id == target_eid
+            c = spike_neuron[idx]
+            push!(get!(chan_spk, c, Float64[]), spike_t[idx])
+        end
+    end
+
+    total_clusters = 0
+    for (c, times) in chan_spk
+        sort!(times)
+        n_cl = 1
+        for j in 2:length(times)
+            if times[j] - times[j-1] > delta_t_sep
+                n_cl += 1
+            end
+        end
+        total_clusters += n_cl
+    end
+    return total_clusters
 end
 
 """
@@ -316,10 +453,33 @@ function prune_dead_motifs!(
                 E_m = length(occs)
 
                 P_m = length(m.packets)
-                W_eff = max(m.delta_right - m.delta_left, 0.10)
+                update_motif_bounds!(m; bg_rates=bg_rates)
+                W_eff = max(m.W_window, 6.0 * sigma_prior)
                 tax_crp = log(max(1.0, Float64(E_total)) / max(1e-6, gamma_motif))
                 tax_per_pkt = log(W_eff / (sqrt(2π) * sigma_prior)) + log(beta_a + 1.0)
                 tax_dict = max(0.0, tax_crp) + P_m * tax_per_pkt
+
+                # Guard 2 & 3: For singleton death (E_m = 1), evaluate exact combinatorial model prior
+                # and centroid marginalization factor on the reference pool D_bg ∪ S_{e_0}.
+                log_q_ratio = if E_m == 1
+                    occ = occs[1]
+                    n_occ_spk = length(occ.members)
+
+                    reach = max(W_eff, 0.75)
+                    K_cand = count_candidate_clusters_in_window(
+                        spike_t, spike_neuron, assign, occ.tau, reach, T_total, sigma_prior, occ.id
+                    )
+                    if K_cand < P_m
+                        continue # Reversibility guard: single-step birth unreachable (alpha_death = 0)
+                    end
+                    log_comb = loggamma(K_cand + 1) - loggamma(P_m + 1) - loggamma(K_cand - P_m + 1)
+                    centroid_tax = 0.5 * sum(log(Float64(max(1, occ.counts[p]))) for p in 1:P_m if occ.counts[p] > 0)
+                    tax_dict += log_comb + centroid_tax
+
+                    log(max(1.0, Float64(n_occ_spk)) * Float64(n_candidates) / Float64(n_bg_spikes + n_occ_spk))
+                else
+                    log(Float64(n_candidates) / Float64(n_bg_spikes))
+                end
 
                 tau_min = max(0.0, -m.delta_left)
                 tau_max = max(tau_min, T_total - m.delta_right)
