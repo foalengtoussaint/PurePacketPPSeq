@@ -207,6 +207,11 @@ function prune_dead_packets!(
             continue
         end
 
+        # Reversibility Guard: If E_m < 2, reverse packet birth is forbidden (q_birth = 0 => alpha_death = 0)
+        if spike_t !== nothing && E_m < 2
+            continue
+        end
+
         # 3. Continuous Parameter Occam Volume Tax on Survivor Support
         tax_loadings = 0.0
         if active_mask !== nothing && ard_alphas !== nothing
@@ -401,7 +406,7 @@ function detect_and_birth_or_split_packets!(
     allow_multi_packets::Bool=true
 )
     E_m = length(occurrences)
-    E_m == 0 && return false
+    E_m < 2 && return false
     var_prior = sigma_prior^2
     E_eff = max(sum(occ.amplitude for occ in occurrences; init=0.0), 1.0)
     occ_dict = Dict(occ.id => occ for occ in occurrences)

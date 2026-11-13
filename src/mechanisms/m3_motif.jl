@@ -104,6 +104,8 @@ function detect_and_birth_new_motifs!(
     gamma_motif::Float64=100.0,
     alpha_a::Float64=1.0,
     beta_a::Float64=1.0,
+    alpha_c::Float64=10.0,
+    beta_c::Float64=10.0,
     alpha_m::Float64=0.05,
     beta_m::Float64=1.0,
     counts_bg::Union{Vector{Int}, Nothing}=nothing,
@@ -247,6 +249,14 @@ function detect_and_birth_new_motifs!(
             tax_total = occam_motif !== nothing ? occam_motif : (tax_dict + tax_e0 + log_comb)
 
             llr_sum = sum(prefix[p].llr for p in 1:k)
+            if occam_motif === nothing
+                A_m_cand = sum(prefix[p].a_post for p in 1:k)
+                N_e_cand = sum(length(prefix[p].spikes) for p in 1:k)
+                delta_motor = alpha_c * log(beta_c / (beta_c + A_m_cand)) +
+                              loggamma(alpha_c + Float64(N_e_cand)) - loggamma(alpha_c) -
+                              Float64(N_e_cand) * log(beta_c + A_m_cand)
+                llr_sum += delta_motor
+            end
             E_net = llr_sum - tax_total
 
             if E_net > best_E_net

@@ -315,6 +315,19 @@ function step_pure_packet_sweep!(
 )
     N_channels = length(bg_rates)
 
+    # 0. Mechanism m=3: Dynamic Motif Archetype Birth (M -> M+1) from Background Spikes
+    n_motifs_birthed = 0
+    if allow_motif_birth
+        n_motifs_birthed = detect_and_birth_new_motifs!(
+            motifs, occurrences, assign, spike_t, spike_neuron,
+            bg_rates, T_total, length(ard_state.active_mask);
+            N_channels=N_channels, occam_motif=nothing, gamma_motif=gamma_m,
+            alpha_a=alpha_a, beta_a=beta_a, alpha_c=alpha_c, beta_c=beta_c,
+            alpha_m=alpha_m, beta_m=beta_m,
+            counts_bg=counts_bg, ou_ctx=ou_ctx, rng=rng
+        )
+    end
+
     # 1. Mechanism m=2: Occurrence Candidate Birth Proposals
     n_birthed, n_overwritten = detect_and_birth_occurrences!(
         occurrences, motifs, spike_t, spike_neuron, chan_to_spikes,
@@ -334,18 +347,6 @@ function step_pure_packet_sweep!(
         ou_ctx=ou_ctx, rng=rng
     )
     n_pruned = length(pruned_occ_ids)
-
-    # 2b. Mechanism m=3: Dynamic Motif Archetype Birth (M -> M+1) from Background Spikes
-    n_motifs_birthed = 0
-    if allow_motif_birth && sweep >= 2
-        n_motifs_birthed = detect_and_birth_new_motifs!(
-            motifs, occurrences, assign, spike_t, spike_neuron,
-            bg_rates, T_total, length(ard_state.active_mask);
-            N_channels=N_channels, occam_motif=nothing, gamma_motif=gamma_m,
-            alpha_a=alpha_a, beta_a=beta_a, alpha_m=alpha_m, beta_m=beta_m,
-            counts_bg=counts_bg, ou_ctx=ou_ctx, rng=rng
-        )
-    end
 
     # 3. Sampler: Channel-First Routed Dual-Index Spike Resampling (Multi-threaded)
     chan_to_motifs = update_chan_to_motifs(motifs, N_channels)
