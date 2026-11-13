@@ -22,11 +22,183 @@ where R_p == 0.0 whenever SNR_p <= 1.0 (Rule 3 SNR pruning from first principles
 end
 
 """
-    sample_packet_masses!(m::PurePacketMotif, occurrences::Vector{PureOccurrence}; alpha_a=1.0, beta_a=1.0, bg_rates=nothing, rng=default_rng())
+    compute_effective_bg_rate(
+        chan::Int,
+        mu_p::Float64,
+        occurrences::Vector{PureOccurrence},
+        bg_rates::Union{Nothing, Vector{Float64}},
+        ou_ctx::Union{Nothing, ContinuousOUContext}
+    )::Float64
+
+Calculates the occurrence-averaged instantaneous background rate:
+    lambda_bar_{0,c}^{eff}(p) = (1 / E_m) * sum_{e=1}^{E_m} lambda_c^{(0)}(tau_e + mu_p)
+Ensures birth, death, and Gibbs mass sampling share the identical scalar lower truncation bound:
+    a_min(p) = sqrt(2*pi) * sigma_p * lambda_bar_{0,c}^{eff}(p)
+"""
+function compute_effective_bg_rate(
+    chan::Int,
+    mu_p::Float64,
+    occurrences::Vector{PureOccurrence},
+    bg_rates::Union{Nothing, Vector{Float64}},
+    ou_ctx::Union{Nothing, ContinuousOUContext}
+)::Float64
+    lam_static = (bg_rates !== nothing && chan <= length(bg_rates)) ? max(bg_rates[chan], 1e-12) : 0.5
+    if ou_ctx === nothing || isempty(occurrences)
+        return lam_static
+    end
+    sum_lam = 0.0
+    for occ in occurrences
+        t_eval = occ.tau + mu_p
+        sum_lam += exp(evaluate_background_log_intensity(ou_ctx, bg_rates, chan, t_eval))
+    end
+    return max(sum_lam / Float64(length(occurrences)), 1e-12)
+end
+
+"""
+    compute_channel_tax_birth(
+        chan::Int,
+        chan_to_packets::Vector{Vector{Int}},
+        P_curr::Int,
+        N_channels::Int,
+        proposal_support::Float64;
+        sigma_prior::Float64=0.015,
+        eta::Float64=log(2.0)
+    )::Float64
+
+Computes the Two-Part MDL + 1D Tonks gas channel Occam tax for adding a packet on `chan` (P_curr -> P_curr + 1):
+- New channel (k_c == 0 -> 1):
+    tax = ln((N_channels - |C_m|) / (|C_m| + 1)) + ln(P_curr + 1)
+- Existing channel (k_c >= 1 -> k_c + 1):
+    tax = eta + ln((P_curr + 1) / (k_c + 1)) - Delta_ln_p_Tonks
+where Delta_ln_p_Tonks = (k_c + 1) * ln(1 - k_c * Delta_sep / |S_m|) - k_c * ln(1 - (k_c - 1) * Delta_sep / |S_m|).
+If |S_m| <= k_c * Delta_sep, returns Inf (Rayleigh packing limit).
+"""
+function compute_channel_tax_birth(
+    chan::Int,
+    chan_to_packets::Vector{Vector{Int}},
+    P_curr::Int,
+    N_channels::Int,
+    proposal_support::Float64;
+    sigma_prior::Float64=0.015,
+    eta::Float64=log(2.0)
+)::Float64
+    k_c = (chan <= length(chan_to_packets)) ? length(chan_to_packets[chan]) : 0
+    active_chans = count(!isempty, chan_to_packets)
+    delta_sep = 2.0 * sqrt(2.0) * sigma_prior
+
+    if k_c == 0
+        num = max(1, N_channels - active_chans)
+        den = active_chans + 1
+        return log(Float64(num) / Float64(den)) + log(Float64(P_curr + 1))
+    else
+        if proposal_support <= Float64(k_c) * delta_sep
+            return Inf
+        end
+        tonks_curr = (k_c > 1) ? Float64(k_c) * log(max(1e-12, 1.0 - (Float64(k_c - 1) * delta_sep) / proposal_support)) : 0.0
+        tonks_next = Float64(k_c + 1) * log(max(1e-12, 1.0 - (Float64(k_c) * delta_sep) / proposal_support))
+        delta_tonks = tonks_next - tonks_curr
+        return eta + log(Float64(P_curr + 1) / Float64(k_c + 1)) - delta_tonks
+    end
+end
+
+"""
+    compute_channel_tax_death(
+        chan::Int,
+        chan_to_packets::Vector{Vector{Int}},
+        P_curr::Int,
+        N_channels::Int,
+        surv_support::Float64;
+        sigma_prior::Float64=0.015,
+        eta::Float64=log(2.0)
+    )::Float64
+
+Computes the exact symmetric Two-Part MDL + 1D Tonks gas channel Occam credit for removing a packet on `chan` (P_curr -> P_curr - 1):
+- Removing the only packet on channel (k_c == 1 -> 0):
+    tax = ln((N_channels - |C_m| + 1) / |C_m|) + ln(P_curr)
+- Removing one of multiple packets on channel (k_c >= 2 -> k_c - 1):
+    tax = eta + ln(P_curr / k_c) - Delta_ln_p_Tonks
+where Delta_ln_p_Tonks = k_c * ln(1 - (k_c - 1) * Delta_sep / |S_surv|) - (k_c - 1) * ln(1 - (k_c - 2) * Delta_sep / |S_surv|).
+"""
+function compute_channel_tax_death(
+    chan::Int,
+    chan_to_packets::Vector{Vector{Int}},
+    P_curr::Int,
+    N_channels::Int,
+    surv_support::Float64;
+    sigma_prior::Float64=0.015,
+    eta::Float64=log(2.0)
+)::Float64
+    k_c = (chan <= length(chan_to_packets)) ? length(chan_to_packets[chan]) : 1
+    active_chans = count(!isempty, chan_to_packets)
+    delta_sep = 2.0 * sqrt(2.0) * sigma_prior
+
+    if k_c <= 1
+        num = max(1, N_channels - active_chans + 1)
+        den = max(1, active_chans)
+        return log(Float64(num) / Float64(den)) + log(Float64(max(1, P_curr)))
+    else
+        tonks_curr = Float64(k_c) * log(max(1e-12, 1.0 - (Float64(k_c - 1) * delta_sep) / surv_support))
+        tonks_prev = (k_c > 2) ? Float64(k_c - 1) * log(max(1e-12, 1.0 - (Float64(k_c - 2) * delta_sep) / surv_support)) : 0.0
+        delta_tonks = tonks_curr - tonks_prev
+        return eta + log(Float64(P_curr) / Float64(k_c)) - delta_tonks
+    end
+end
+
+"""
+    compute_motif_channel_log_prior(
+        chan_to_packets::Vector{Vector{Int}},
+        P_m::Int,
+        N_channels::Int,
+        proposal_support::Float64;
+        sigma_prior::Float64=0.015,
+        eta::Float64=log(2.0)
+    )::Float64
+
+Computes the exact Two-Part MDL + 1D Tonks gas channel log-prior:
+    ln p(c_{1:P_m}) = -ln(N_channels choose |C_m|) - sum_{c in C_m} eta * (k_c - 1)
+                      - ln(P_m! / prod_{c in C_m} k_c!) + sum_{c in C_m} Delta_ln_p_Tonks(k_c)
+"""
+function compute_motif_channel_log_prior(
+    chan_to_packets::Vector{Vector{Int}},
+    P_m::Int,
+    N_channels::Int,
+    proposal_support::Float64;
+    sigma_prior::Float64=0.015,
+    eta::Float64=log(2.0)
+)::Float64
+    active_chans = count(!isempty, chan_to_packets)
+    active_chans == 0 && return 0.0
+    delta_sep = 2.0 * sqrt(2.0) * sigma_prior
+
+    # Part 1: -ln(N choose |C_m|)
+    ln_binom = loggamma(N_channels + 1) - loggamma(active_chans + 1) - loggamma(N_channels - active_chans + 1)
+    ln_p = -ln_binom
+
+    # Part 2: Waveform complexity -sum eta*(k_c - 1) and multinomial -ln(P! / prod k_c!)
+    # and Tonks configurational entropy
+    ln_multinomial = loggamma(P_m + 1)
+    for c in 1:length(chan_to_packets)
+        k_c = length(chan_to_packets[c])
+        k_c == 0 && continue
+        ln_multinomial -= loggamma(k_c + 1)
+        if k_c > 1
+            ln_p -= eta * Float64(k_c - 1)
+            if proposal_support <= Float64(k_c - 1) * delta_sep
+                return -Inf
+            end
+            ln_p += Float64(k_c) * log(max(1e-12, 1.0 - (Float64(k_c - 1) * delta_sep) / proposal_support))
+        end
+    end
+    ln_p -= ln_multinomial
+    return ln_p
+end
+
+"""
+    sample_packet_masses!(m::PurePacketMotif, occurrences::Vector{PureOccurrence}; alpha_a=1.0, beta_a=1.0, bg_rates=nothing, ou_ctx=nothing, rng=default_rng())
 
 Conjugate Gamma draws for packet emission amplitudes a_{m,p} under the biophysical truncated prior:
     a_{m,p} ~ Gamma(alpha_a + sum_e c_{e,p}, 1 / (beta_a + sum_e c_e)) * I(a_{m,p} > a_min(p))
-where a_min(p) = sqrt(2pi) * sigma_p * lambda_{0,c} guarantees SNR_p > 1.0 for all live packets.
+where a_min(p) = sqrt(2pi) * sigma_p * lambda_bar_{0,c}^{eff}(p) guarantees SNR_p > 1.0 for all live packets.
 """
 function sample_packet_masses!(
     m::PurePacketMotif,
@@ -34,6 +206,7 @@ function sample_packet_masses!(
     alpha_a::Float64=1.0,
     beta_a::Float64=1.0,
     bg_rates::Union{Nothing, Vector{Float64}}=nothing,
+    ou_ctx::Union{Nothing, ContinuousOUContext}=nothing,
     rng::AbstractRNG=Random.default_rng()
 )
     P = length(m.packets)
@@ -46,7 +219,7 @@ function sample_packet_masses!(
     for p in 1:P
         pkt = m.packets[p]
         chan = pkt.channel
-        lam0 = (bg_rates !== nothing && chan <= length(bg_rates)) ? max(bg_rates[chan], 1e-12) : 0.0
+        lam0 = compute_effective_bg_rate(chan, pkt.mu, occurrences, bg_rates, ou_ctx)
         sig_p = sqrt(max(pkt.var, 1e-8))
         a_min = (lam0 > 0.0) ? (sqrt(2π) * sig_p * lam0) : 0.0
 
@@ -246,7 +419,7 @@ function prune_dead_packets!(
         if proposal_support_curr > proposal_support && proposal_support > 0.0
             tax_contraction = Float64(P - 1) * log(proposal_support_curr / proposal_support)
         end
-        tax_chan = log(Float64(max(1, N_channels)))
+        tax_chan = compute_channel_tax_death(chan, m.chan_to_packets, P, N_channels, proposal_support; sigma_prior=sigma_prior)
         tax_occam = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_chan + tax_contraction
 
         # 4. Evaluate Gamma-Marginalized Log-Evidence Delta ln M_p
@@ -290,12 +463,14 @@ function prune_dead_packets!(
                     (chan <= length(bg_rates)) ? max(bg_rates[chan], 1e-12) : 0.5
                 end
                 bump = a_post * exp(-0.5 * (dt * dt) / var_prior) / (sqrt(2π) * sigma_prior)
-                llr_p += log(1.0 + bump / lam_s)
+                if bump > lam_s
+                    llr_p += log(1.0 + bump / lam_s)
+                end
             end
             llr_p -= E_eff * a_post
 
             # Biophysical Truncated Gamma marginal likelihood correction (ln Z_post - ln Z_0)
-            lam0 = (chan <= length(bg_rates)) ? max(bg_rates[chan], 1e-12) : 0.5
+            lam0 = compute_effective_bg_rate(chan, pkt.mu, occurrences, bg_rates, ou_ctx)
             a_min = sqrt(2π) * sigma_prior * lam0
             if a_min > 0.0
                 ln_Z0 = logccdf(Gamma(alpha_a, 1.0 / beta_a), a_min)
@@ -305,11 +480,12 @@ function prune_dead_packets!(
         else
             # Analytical fallback for unit tests without full spike arrays
             sigma_p = sqrt(pkt.var)
-            lam0 = (chan <= length(bg_rates)) ? max(bg_rates[chan], 1e-12) : 0.5
+            lam0 = compute_effective_bg_rate(chan, pkt.mu, occurrences, bg_rates, ou_ctx)
             a_min = sqrt(2π) * sigma_p * lam0
             a_post = (alpha_a + Float64(c_tot)) / (beta_a + E_eff)
             bump = a_post / (sqrt(2π) * sigma_p)
-            llr_p = Float64(c_tot) * log(1.0 + bump / lam0) - E_eff * a_post
+            llr_p = (bump > lam0) ? (Float64(c_tot) * log(1.0 + bump / lam0)) : 0.0
+            llr_p -= E_eff * a_post
             if a_min > 0.0
                 ln_Z0 = logccdf(Gamma(alpha_a, 1.0 / beta_a), a_min)
                 ln_Zpost = logccdf(Gamma(alpha_a + Float64(c_tot), 1.0 / (beta_a + E_eff)), a_min)
@@ -512,10 +688,10 @@ function detect_and_birth_or_split_packets!(
                 spk_sorted = split_spk_indices[sort_idx]
 
                 split_span = max(cand_sorted[end] - cand_sorted[1], 4.0 * sigma_prior)
-                occam_split = log(split_span / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_chan
+                tax_chan_split = compute_channel_tax_birth(chan, m.chan_to_packets, length(m.packets), N_channels, proposal_support; sigma_prior=sigma_prior)
+                isinf(tax_chan_split) && continue
+                occam_split = log(split_span / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_chan_split
 
-                lam0 = bg_rates[chan]
-                a_min = sqrt(2π) * sigma_prior * max(lam0, 1e-12)
                 best_split_llr = -Inf
                 best_split_mu = 0.0
                 last_split_t = -Inf
@@ -546,6 +722,7 @@ function detect_and_birth_or_split_packets!(
                         end
                     end
                     a_cand = (alpha_a + sum_w) / (beta_a + E_eff)
+                    lam0 = compute_effective_bg_rate(chan, t_cand, occurrences, bg_rates, ou_ctx)
                     a_min = sqrt(2π) * sigma_prior * max(lam0, 1e-12)
                     if a_cand <= a_min
                         continue
@@ -566,7 +743,9 @@ function detect_and_birth_or_split_packets!(
                             else
                                 max(lam0, 1e-12)
                             end
-                            llr += log(1.0 + bump / lam_s)
+                            if bump > lam_s
+                                llr += log(1.0 + bump / lam_s)
+                            end
                         end
                     end
                     llr -= E_eff * a_cand
@@ -619,7 +798,9 @@ function detect_and_birth_or_split_packets!(
 
                     P_new = length(m.packets) + 1
                     init_mass = (alpha_a + Float64(N_split_cand)) / (beta_a + E_eff)
-                    new_pkt = Packet(P_new, chan, mu_refined, var_prior, max(init_mass, a_min + 1e-4))
+                    lam0_refined = compute_effective_bg_rate(chan, mu_refined, occurrences, bg_rates, ou_ctx)
+                    a_min_split = sqrt(2π) * sigma_prior * max(lam0_refined, 1e-12)
+                    new_pkt = Packet(P_new, chan, mu_refined, var_prior, max(init_mass, a_min_split + 1e-4))
                     push!(m.packets, new_pkt)
 
                     R_max = size(m.W, 1)
@@ -694,7 +875,6 @@ function detect_and_birth_or_split_packets!(
         candidate_rel_times = chan_cand_times[chan]
         isempty(candidate_rel_times) && continue
 
-        lam0 = bg_rates[chan]
         existing_packets = m.chan_to_packets[chan]
 
         perm_cand = sortperm(candidate_rel_times)
@@ -702,10 +882,14 @@ function detect_and_birth_or_split_packets!(
         candidate_spks = chan_cand_spks[chan][perm_cand]
         N_cand = length(candidate_rel_times)
 
-        a_min = sqrt(2π) * sigma_prior * max(lam0, 1e-12)
+        tax_chan = compute_channel_tax_birth(chan, m.chan_to_packets, length(m.packets), N_channels, proposal_support; sigma_prior=sigma_prior)
+        isinf(tax_chan) && continue
+        occam_birth = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_chan
+
+        lam0_coarse = (bg_rates !== nothing && chan <= length(bg_rates)) ? max(bg_rates[chan], 1e-12) : 0.5
         max_rate_bump = ((alpha_a + N_cand) / (beta_a + E_eff)) / (sqrt(2π) * sigma_prior)
-        max_rate_bump <= max(lam0, 1e-12) && continue
-        max_gain_per_spike = log(1.0 + max_rate_bump / max(lam0, 1e-12))
+        max_rate_bump <= lam0_coarse && continue
+        max_gain_per_spike = log(1.0 + max_rate_bump / lam0_coarse)
         max_possible_llr = N_cand * max_gain_per_spike
         max_possible_llr <= occam_birth && continue
 
@@ -748,6 +932,8 @@ function detect_and_birth_or_split_packets!(
                 sum_w += exp(-0.5 * (dt * dt) / var_prior)
             end
             a_cand = (alpha_a + sum_w) / (beta_a + E_eff)
+            lam0 = compute_effective_bg_rate(chan, t_cand, occurrences, bg_rates, ou_ctx)
+            a_min = sqrt(2π) * sigma_prior * max(lam0, 1e-12)
             if a_cand <= a_min
                 continue
             end
@@ -766,7 +952,9 @@ function detect_and_birth_or_split_packets!(
                 else
                     max(lam0, 1e-12)
                 end
-                llr += log(1.0 + bump / lam_s)
+                if bump > lam_s
+                    llr += log(1.0 + bump / lam_s)
+                end
             end
             llr -= E_eff * a_cand
             llr += delta_ln_Z
@@ -869,14 +1057,15 @@ function detect_and_birth_or_split_packets!(
                 end
             end
 
-            new_pkt.mass = max((alpha_a + Float64(harvested_count)) / (beta_a + E_eff), a_min + 1e-4)
+            lam0_birth_refined = compute_effective_bg_rate(chan, mu_refined, occurrences, bg_rates, ou_ctx)
+            a_min_birth = sqrt(2π) * sigma_prior * max(lam0_birth_refined, 1e-12)
+            new_pkt.mass = max((alpha_a + Float64(harvested_count)) / (beta_a + E_eff), a_min_birth + 1e-4)
             birthed_any = true
             env_left = new_env_left
             env_right = new_env_right
             proposal_support = new_proposal_support
             s_left = env_left - delta_reach
             s_right = env_right + delta_reach
-            occam_birth = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_chan
         end
     end
 

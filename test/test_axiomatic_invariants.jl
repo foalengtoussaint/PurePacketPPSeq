@@ -53,7 +53,20 @@ println("=================================================================")
         max_surv = maximum(p.mu for p in m.packets)
         proposal_support = max(max_surv - min_surv, 6.0 * sigma_prior)
         
-        tax_occam_p = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + log(Float64(N_chans))
+        # Sub-test 1A (i): New Channel Birth / Death Two-Part MDL Reciprocity
+        tax_chan_p = compute_channel_tax_birth(cand_chan, m.chan_to_packets, length(m.packets), N_chans, proposal_support; sigma_prior=sigma_prior)
+        m_with_cand = PurePacketMotif(1, [surv_pkts..., Packet(4, cand_chan, cand_mu, var_prior, 1.0)], 1, N_chans; W_window=0.40)
+        tax_chan_death = compute_channel_tax_death(cand_chan, m_with_cand.chan_to_packets, length(m_with_cand.packets), N_chans, proposal_support; sigma_prior=sigma_prior)
+        @test isapprox(tax_chan_p, tax_chan_death, atol=1e-14)
+
+        # Sub-test 1A (ii): Existing Channel Multi-Packet Two-Part MDL + Tonks Reciprocity
+        cand_chan_exist = 2
+        tax_chan_exist_birth = compute_channel_tax_birth(cand_chan_exist, m.chan_to_packets, length(m.packets), N_chans, proposal_support; sigma_prior=sigma_prior)
+        m_with_exist = PurePacketMotif(1, [surv_pkts..., Packet(4, cand_chan_exist, 0.150, var_prior, 1.0)], 1, N_chans; W_window=0.40)
+        tax_chan_exist_death = compute_channel_tax_death(cand_chan_exist, m_with_exist.chan_to_packets, length(m_with_exist.packets), N_chans, proposal_support; sigma_prior=sigma_prior)
+        @test isapprox(tax_chan_exist_birth, tax_chan_exist_death, atol=1e-14)
+
+        tax_occam_p = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_chan_p
         
         # Synthetic spike observations across occurrences
         cand_dt = [0.001 * randn(rng) for _ in 1:E_m]
@@ -64,7 +77,9 @@ println("=================================================================")
         llr_p = 0.0
         for dt in cand_dt
             bump = a_post * exp(-0.5 * dt^2 / var_prior) / (sqrt(2π) * sigma_prior)
-            llr_p += log(1.0 + bump / lam0)
+            if bump > lam0
+                llr_p += log(1.0 + bump / lam0)
+            end
         end
         llr_p -= E_eff * a_post
 

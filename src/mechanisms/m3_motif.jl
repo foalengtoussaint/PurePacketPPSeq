@@ -507,7 +507,7 @@ function prune_dead_motifs!(
                 else
                     # E_m >= 2: Exact generative dictionary prior matching Level m=1 packet discovery
                     N_chans = (bg_rates !== nothing) ? length(bg_rates) : length(m.chan_to_packets)
-                    tax_chan = P_m * log(Float64(max(1, N_chans)))
+                    tax_chan = -compute_motif_channel_log_prior(m.chan_to_packets, P_m, N_chans, W_eff; sigma_prior=sigma_prior)
                     tax_dict += tax_chan + centroid_tax
                 end
 

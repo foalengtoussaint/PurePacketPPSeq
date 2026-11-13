@@ -108,6 +108,10 @@ export
     update_packet_corridors!,
     prune_dead_packets!,
     detect_and_birth_or_split_packets!,
+    compute_effective_bg_rate,
+    compute_channel_tax_birth,
+    compute_channel_tax_death,
+    compute_motif_channel_log_prior,
 
     # Mechanism m=2: Carrier Occurrences
     calc_marginal_log_evidence,
