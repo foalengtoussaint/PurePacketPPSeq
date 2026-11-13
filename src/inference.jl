@@ -447,7 +447,7 @@ function step_pure_packet_sweep!(
         mid in frozen_motif_ids && continue
         occ_list = [occ for occ in values(occurrences) if occ.motif == mid]
         isempty(occ_list) && continue
-        sample_packet_masses!(pm, occ_list; alpha_a=1.0, beta_a=1.0, rng=rng)
+        sample_packet_masses!(pm, occ_list; alpha_a=1.0, beta_a=1.0, bg_rates=bg_rates, rng=rng)
     end
 
     # 10. Mechanism m=1: Reversible-Jump Pruning of Inactive Packets (Detailed Balance Reverse Jump)

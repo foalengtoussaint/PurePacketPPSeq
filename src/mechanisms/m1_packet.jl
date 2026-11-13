@@ -22,16 +22,18 @@ where R_p == 0.0 whenever SNR_p <= 1.0 (Rule 3 SNR pruning from first principles
 end
 
 """
-    sample_packet_masses!(m::PurePacketMotif, occurrences::Vector{PureOccurrence}; alpha_a=1.0, beta_a=1.0, rng=default_rng())
+    sample_packet_masses!(m::PurePacketMotif, occurrences::Vector{PureOccurrence}; alpha_a=1.0, beta_a=1.0, bg_rates=nothing, rng=default_rng())
 
-Conjugate Gamma draws for packet emission amplitudes a_{m,p}:
-    a_{m,p} ~ Gamma(alpha_a + sum_e c_{e,p}, 1 / (beta_a + sum_e c_e)).
+Conjugate Gamma draws for packet emission amplitudes a_{m,p} under the biophysical truncated prior:
+    a_{m,p} ~ Gamma(alpha_a + sum_e c_{e,p}, 1 / (beta_a + sum_e c_e)) * I(a_{m,p} > a_min(p))
+where a_min(p) = sqrt(2pi) * sigma_p * lambda_{0,c} guarantees SNR_p > 1.0 for all live packets.
 """
 function sample_packet_masses!(
     m::PurePacketMotif,
     occurrences::Vector{PureOccurrence};
     alpha_a::Float64=1.0,
     beta_a::Float64=1.0,
+    bg_rates::Union{Nothing, Vector{Float64}}=nothing,
     rng::AbstractRNG=Random.default_rng()
 )
     P = length(m.packets)
@@ -42,9 +44,21 @@ function sample_packet_masses!(
     scale_post = 1.0 / rate_post
 
     for p in 1:P
+        pkt = m.packets[p]
+        chan = pkt.channel
+        lam0 = (bg_rates !== nothing && chan <= length(bg_rates)) ? max(bg_rates[chan], 1e-12) : 0.0
+        sig_p = sqrt(max(pkt.var, 1e-8))
+        a_min = (lam0 > 0.0) ? (sqrt(2π) * sig_p * lam0) : 0.0
+
         c_tot = sum(occ.counts[p] for occ in occurrences; init=0)
         shape_post = max(alpha_a + max(0, c_tot), 1e-4)
-        m.packets[p].mass = rand(rng, Gamma(shape_post, scale_post))
+        d = Gamma(shape_post, scale_post)
+        if a_min > 0.0
+            td = truncated(d; lower=a_min)
+            pkt.mass = rand(rng, td)
+        else
+            pkt.mass = rand(rng, d)
+        end
     end
 end
 
@@ -279,13 +293,28 @@ function prune_dead_packets!(
                 llr_p += log(1.0 + bump / lam_s)
             end
             llr_p -= E_eff * a_post
+
+            # Biophysical Truncated Gamma marginal likelihood correction (ln Z_post - ln Z_0)
+            lam0 = (chan <= length(bg_rates)) ? max(bg_rates[chan], 1e-12) : 0.5
+            a_min = sqrt(2π) * sigma_prior * lam0
+            if a_min > 0.0
+                ln_Z0 = logccdf(Gamma(alpha_a, 1.0 / beta_a), a_min)
+                ln_Zpost = logccdf(Gamma(alpha_a + sum_w, 1.0 / (beta_a + E_eff)), a_min)
+                llr_p += (ln_Zpost - ln_Z0)
+            end
         else
             # Analytical fallback for unit tests without full spike arrays
             sigma_p = sqrt(pkt.var)
             lam0 = (chan <= length(bg_rates)) ? max(bg_rates[chan], 1e-12) : 0.5
+            a_min = sqrt(2π) * sigma_p * lam0
             a_post = (alpha_a + Float64(c_tot)) / (beta_a + E_eff)
             bump = a_post / (sqrt(2π) * sigma_p)
             llr_p = Float64(c_tot) * log(1.0 + bump / lam0) - E_eff * a_post
+            if a_min > 0.0
+                ln_Z0 = logccdf(Gamma(alpha_a, 1.0 / beta_a), a_min)
+                ln_Zpost = logccdf(Gamma(alpha_a + Float64(c_tot), 1.0 / (beta_a + E_eff)), a_min)
+                llr_p += (ln_Zpost - ln_Z0)
+            end
             # Enforce SNR <= 1.0 or c_tot == 0 in fallback mode when occam_tax was explicitly passed
             if c_tot == 0 || (c_tot < 2 && (a_post / (sqrt(2π) * sigma_p * lam0)) <= 1.0)
                 llr_p = -Inf
@@ -486,6 +515,7 @@ function detect_and_birth_or_split_packets!(
                 occam_split = log(split_span / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_chan
 
                 lam0 = bg_rates[chan]
+                a_min = sqrt(2π) * sigma_prior * max(lam0, 1e-12)
                 best_split_llr = -Inf
                 best_split_mu = 0.0
                 last_split_t = -Inf
@@ -516,6 +546,15 @@ function detect_and_birth_or_split_packets!(
                         end
                     end
                     a_cand = (alpha_a + sum_w) / (beta_a + E_eff)
+                    a_min = sqrt(2π) * sigma_prior * max(lam0, 1e-12)
+                    if a_cand <= a_min
+                        continue
+                    end
+
+                    ln_Z0 = logccdf(Gamma(alpha_a, 1.0 / beta_a), a_min)
+                    ln_Zpost = logccdf(Gamma(alpha_a + sum_w, 1.0 / (beta_a + E_eff)), a_min)
+                    delta_ln_Z = ln_Zpost - ln_Z0
+
                     llr = 0.0
                     for j in 1:N_split_cand
                         dt = cand_sorted[j] - t_cand
@@ -531,6 +570,7 @@ function detect_and_birth_or_split_packets!(
                         end
                     end
                     llr -= E_eff * a_cand
+                    llr += delta_ln_Z
                     if llr > best_split_llr
                         best_split_llr = llr
                         best_split_mu = t_cand
@@ -579,7 +619,7 @@ function detect_and_birth_or_split_packets!(
 
                     P_new = length(m.packets) + 1
                     init_mass = (alpha_a + Float64(N_split_cand)) / (beta_a + E_eff)
-                    new_pkt = Packet(P_new, chan, mu_refined, var_prior, max(init_mass, 0.05))
+                    new_pkt = Packet(P_new, chan, mu_refined, var_prior, max(init_mass, a_min + 1e-4))
                     push!(m.packets, new_pkt)
 
                     R_max = size(m.W, 1)
@@ -662,7 +702,9 @@ function detect_and_birth_or_split_packets!(
         candidate_spks = chan_cand_spks[chan][perm_cand]
         N_cand = length(candidate_rel_times)
 
+        a_min = sqrt(2π) * sigma_prior * max(lam0, 1e-12)
         max_rate_bump = ((alpha_a + N_cand) / (beta_a + E_eff)) / (sqrt(2π) * sigma_prior)
+        max_rate_bump <= max(lam0, 1e-12) && continue
         max_gain_per_spike = log(1.0 + max_rate_bump / max(lam0, 1e-12))
         max_possible_llr = N_cand * max_gain_per_spike
         max_possible_llr <= occam_birth && continue
@@ -706,6 +748,13 @@ function detect_and_birth_or_split_packets!(
                 sum_w += exp(-0.5 * (dt * dt) / var_prior)
             end
             a_cand = (alpha_a + sum_w) / (beta_a + E_eff)
+            if a_cand <= a_min
+                continue
+            end
+
+            ln_Z0 = logccdf(Gamma(alpha_a, 1.0 / beta_a), a_min)
+            ln_Zpost = logccdf(Gamma(alpha_a + sum_w, 1.0 / (beta_a + E_eff)), a_min)
+            delta_ln_Z = ln_Zpost - ln_Z0
 
             llr = 0.0
             @inbounds for j in left_ptr:(right_ptr - 1)
@@ -720,6 +769,7 @@ function detect_and_birth_or_split_packets!(
                 llr += log(1.0 + bump / lam_s)
             end
             llr -= E_eff * a_cand
+            llr += delta_ln_Z
 
             if llr > best_llr
                 best_llr = llr
@@ -819,7 +869,7 @@ function detect_and_birth_or_split_packets!(
                 end
             end
 
-            new_pkt.mass = max((alpha_a + Float64(harvested_count)) / (beta_a + E_eff), 0.05)
+            new_pkt.mass = max((alpha_a + Float64(harvested_count)) / (beta_a + E_eff), a_min + 1e-4)
             birthed_any = true
             env_left = new_env_left
             env_right = new_env_right

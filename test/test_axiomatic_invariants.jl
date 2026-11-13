@@ -68,6 +68,12 @@ println("=================================================================")
         end
         llr_p -= E_eff * a_post
 
+        # Truncated Gamma marginal likelihood correction (ln Z_post - ln Z_0)
+        a_min = sqrt(2π) * sigma_prior * lam0
+        ln_Z0 = logccdf(Gamma(alpha_a, 1.0 / beta_a), a_min)
+        ln_Zpost = logccdf(Gamma(alpha_a + sum_w, 1.0 / (beta_a + E_eff)), a_min)
+        llr_p += (ln_Zpost - ln_Z0)
+
         # Forward Jump (Birth: P -> P+1)
         ln_rho_birth = llr_p - tax_occam_p
         
