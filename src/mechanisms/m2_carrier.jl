@@ -597,11 +597,13 @@ function detect_and_birth_occurrences!(
 
         p_hit_1 = sum_snr / W_m
         L_m_star = max(ceil(Int, log(1.0 / alpha_stopping) / p_hit_1), 100)
-        refract_dist = refractory_fraction * W_eff
+        refract_dist = max(m.delta_right - m.delta_left, 2.0 * 0.015)
 
-        c_reject = 0
+        mid_occs = [occ for occ in values(occurrences) if occ.motif == mid]
+        sort!(mid_occs, by=occ -> occ.tau)
+        mid_taus = [occ.tau for occ in mid_occs]
 
-        while c_reject < L_m_star
+        for step_prop in 1:L_m_star
             if rand(rng) < eps_m
                 tau_star = rand(rng) * (tau_max - tau_min) + tau_min
             else
@@ -611,7 +613,6 @@ function detect_and_birth_occurrences!(
                 k_star = pkt_star.channel
                 N_bg_star = length(times_bg[k_star])
                 if N_bg_star == 0
-                    c_reject += 1
                     continue
                 end
 
@@ -621,7 +622,6 @@ function detect_and_birth_occurrences!(
                 tau_seed = t_spk - pkt_star.mu + sig_p_star * randn(rng)
 
                 if (tau_seed < tau_min || tau_seed > tau_max)
-                    c_reject += 1
                     continue
                 end
                 tau_star = tau_seed
@@ -635,7 +635,6 @@ function detect_and_birth_occurrences!(
                 end
             end
             if is_excluded
-                c_reject += 1
                 continue
             end
 
@@ -697,7 +696,6 @@ function detect_and_birth_occurrences!(
             N_cand = length(cand_spk_indices)
             n_active_pkts = length(unique(cand_pkt_indices))
             if N_cand < N_min || n_active_pkts < 2
-                c_reject += 1
                 continue
             end
 
@@ -784,13 +782,25 @@ function detect_and_birth_occurrences!(
 
             incumbent_eid = 0
             min_dist = Inf
-            for (eid, occ) in occurrences
-                if occ.motif == mid
-                    dist = abs(occ.tau - tau_star)
-                    if dist < refract_dist && dist < min_dist
+            if !isempty(mid_taus)
+                idx = searchsortedfirst(mid_taus, tau_star)
+                k = idx
+                while k <= length(mid_taus) && (mid_taus[k] - tau_star) < refract_dist
+                    dist = mid_taus[k] - tau_star
+                    if dist < min_dist
                         min_dist = dist
-                        incumbent_eid = eid
+                        incumbent_eid = mid_occs[k].id
                     end
+                    k += 1
+                end
+                k = idx - 1
+                while k >= 1 && (tau_star - mid_taus[k]) < refract_dist
+                    dist = tau_star - mid_taus[k]
+                    if dist < min_dist
+                        min_dist = dist
+                        incumbent_eid = mid_occs[k].id
+                    end
+                    k -= 1
                 end
             end
 
@@ -816,7 +826,9 @@ function detect_and_birth_occurrences!(
                     n_birthed += 1
                     E_m += 1
 
-                    c_reject = 0
+                    ins_pos = searchsortedfirst(mid_taus, tau_star)
+                    insert!(mid_taus, ins_pos, tau_star)
+                    insert!(mid_occs, ins_pos, new_occ)
 
                     for k_idx in 1:N_cand
                         j_spk = cand_spk_indices[k_idx]
@@ -840,8 +852,6 @@ function detect_and_birth_occurrences!(
                     if W_m > 0.0
                         cum_W = cumsum(W_mp)
                     end
-                else
-                    c_reject += 1
                 end
             else
                 incumbent = occurrences[incumbent_eid]
@@ -878,7 +888,14 @@ function detect_and_birth_occurrences!(
                     push!(intra_sweep_exclusion, (mid, tau_star))
                     n_overwritten += 1
 
-                    c_reject = 0
+                    pos_inc = findfirst(o -> o.id == incumbent.id, mid_occs)
+                    if pos_inc !== nothing
+                        deleteat!(mid_occs, pos_inc)
+                        deleteat!(mid_taus, pos_inc)
+                        ins_pos = searchsortedfirst(mid_taus, tau_star)
+                        insert!(mid_taus, ins_pos, tau_star)
+                        insert!(mid_occs, ins_pos, incumbent)
+                    end
 
                     for k_idx in 1:N_cand
                         j_spk = cand_spk_indices[k_idx]
@@ -899,8 +916,6 @@ function detect_and_birth_occurrences!(
                     W_m = sum(W_mp)
                     W_m <= 0.0 && break
                     cum_W = cumsum(W_mp)
-                else
-                    c_reject += 1
                 end
             end
         end

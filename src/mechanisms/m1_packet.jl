@@ -42,7 +42,9 @@ function compute_effective_bg_rate(
     bg_rates::Union{Nothing, Vector{Float64}},
     ou_ctx::Union{Nothing, ContinuousOUContext}
 )::Float64
-    lam_static = (bg_rates !== nothing && chan <= length(bg_rates)) ? max(bg_rates[chan], 1e-12) : 0.5
+    T_total_ou = (ou_ctx !== nothing && !isempty(ou_ctx.t_net)) ? ou_ctx.t_net[end] : 2114.29
+    min_prior = 1.0 / (1.0 + T_total_ou)
+    lam_static = (bg_rates !== nothing && chan <= length(bg_rates)) ? max(bg_rates[chan], min_prior) : 0.5
     if ou_ctx === nothing || isempty(occurrences)
         return lam_static
     end
@@ -51,7 +53,7 @@ function compute_effective_bg_rate(
         t_eval = occ.tau + mu_p
         sum_lam += exp(evaluate_background_log_intensity(ou_ctx, bg_rates, chan, t_eval))
     end
-    return max(sum_lam / Float64(length(occurrences)), 1e-12)
+    return max(sum_lam / Float64(length(occurrences)), min_prior)
 end
 
 """
@@ -597,6 +599,19 @@ function prune_dead_packets!(
 end
 
 """
+    CandidateBirth
+
+Pre-allocated carrier for deterministic candidate evaluation across threads.
+"""
+struct CandidateBirth
+    valid::Bool
+    chan::Int
+    best_llr::Float64
+    mu_refined::Float64
+    occam_birth::Float64
+end
+
+"""
     detect_and_birth_or_split_packets!(m::PurePacketMotif, occurrences, spike_t, spike_chan, assign, bg_rates, N_channels; ...)
 
 Decoupled RJMCMC packet operators:
@@ -847,51 +862,96 @@ function detect_and_birth_or_split_packets!(
     s_left = env_left - delta_reach
     s_right = env_right + delta_reach
 
-    occam_birth = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_chan
+    occ_taus = sort([occ.tau for occ in occurrences])
 
-    chan_cand_times = [Float64[] for _ in 1:N_channels]
-    chan_cand_spks = [Int[] for _ in 1:N_channels]
-    for occ in occurrences
-        t_start = max(0.0, occ.tau + s_left)
-        t_end = occ.tau + s_right
-        idx_a = searchsortedfirst(spike_t, t_start)
-        idx_b = searchsortedlast(spike_t, t_end)
-        for s_idx in idx_a:idx_b
-            if assign[s_idx].event_id == 0
-                c = spike_chan[s_idx]
-                if !allow_multi_packets && length(m.chan_to_packets[c]) >= 1
-                    continue
-                end
-                push!(chan_cand_times[c], spike_t[s_idx] - occ.tau)
-                push!(chan_cand_spks[c], s_idx)
-            end
-        end
+    max_threads = Threads.maxthreadid()
+    tl_cand_times = [Float64[] for _ in 1:max_threads]
+    tl_cand_spks  = [Int[] for _ in 1:max_threads]
+    for tid in 1:max_threads
+        sizehint!(tl_cand_times[tid], 2048)
+        sizehint!(tl_cand_spks[tid], 2048)
     end
 
-    for chan in 1:N_channels
+    best_cands = Vector{CandidateBirth}(undef, N_channels)
+
+    # Step 1: Thread-parallel candidate identification across all channels (Read-only)
+    Threads.@threads for chan in 1:N_channels
+        tid = Threads.threadid()
+        cand_times_buf = tl_cand_times[tid]
+        cand_spks_buf = tl_cand_spks[tid]
+        empty!(cand_times_buf)
+        empty!(cand_spks_buf)
+
         if !allow_multi_packets && length(m.chan_to_packets[chan]) >= 1
+            best_cands[chan] = CandidateBirth(false, chan, -Inf, 0.0, Inf)
             continue
         end
-        candidate_rel_times = chan_cand_times[chan]
-        isempty(candidate_rel_times) && continue
 
+        if chan_spikes !== nothing
+            spks_c = chan_spikes[chan]
+            for s_idx in spks_c
+                if assign[s_idx].event_id == 0
+                    t_s = spike_t[s_idx]
+                    i_lo = searchsortedfirst(occ_taus, t_s - s_right)
+                    i_hi = searchsortedlast(occ_taus, t_s - s_left)
+                    if i_lo <= i_hi
+                        for i in i_lo:i_hi
+                            push!(cand_times_buf, t_s - occ_taus[i])
+                            push!(cand_spks_buf, s_idx)
+                        end
+                    end
+                end
+            end
+        else
+            for occ in occurrences
+                t_start = max(0.0, occ.tau + s_left)
+                t_end = occ.tau + s_right
+                idx_a = searchsortedfirst(spike_t, t_start)
+                idx_b = searchsortedlast(spike_t, t_end)
+                for s_idx in idx_a:idx_b
+                    if assign[s_idx].event_id == 0 && spike_chan[s_idx] == chan
+                        push!(cand_times_buf, spike_t[s_idx] - occ.tau)
+                        push!(cand_spks_buf, s_idx)
+                    end
+                end
+            end
+        end
+
+        if isempty(cand_times_buf)
+            best_cands[chan] = CandidateBirth(false, chan, -Inf, 0.0, Inf)
+            continue
+        end
         existing_packets = m.chan_to_packets[chan]
 
-        perm_cand = sortperm(candidate_rel_times)
-        candidate_rel_times = candidate_rel_times[perm_cand]
-        candidate_spks = chan_cand_spks[chan][perm_cand]
-        N_cand = length(candidate_rel_times)
-
         tax_chan = compute_channel_tax_birth(chan, m.chan_to_packets, length(m.packets), N_channels, proposal_support; sigma_prior=sigma_prior)
-        isinf(tax_chan) && continue
+        if isinf(tax_chan)
+            best_cands[chan] = CandidateBirth(false, chan, -Inf, 0.0, Inf)
+            continue
+        end
         occam_birth = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_chan
 
-        lam0_coarse = (bg_rates !== nothing && chan <= length(bg_rates)) ? max(bg_rates[chan], 1e-12) : 0.5
-        max_rate_bump = ((alpha_a + N_cand) / (beta_a + E_eff)) / (sqrt(2π) * sigma_prior)
-        max_rate_bump <= lam0_coarse && continue
-        max_gain_per_spike = log(1.0 + max_rate_bump / lam0_coarse)
-        max_possible_llr = N_cand * max_gain_per_spike
-        max_possible_llr <= occam_birth && continue
+        N_cand = length(cand_times_buf)
+        T_total_ou = (ou_ctx !== nothing && !isempty(ou_ctx.t_net)) ? ou_ctx.t_net[end] : 2114.29
+        min_prior = 1.0 / (1.0 + T_total_ou)
+        lam0_coarse = (bg_rates !== nothing && chan <= length(bg_rates)) ? max(bg_rates[chan], min_prior) : 0.5
+        
+        # Guard 1: Use true posterior mode a_hat_max and exact -ln(Z0) bound
+        a_min_chan = sqrt(2π) * sigma_prior * max(lam0_coarse, 1e-12)
+        a_hat_max = max(a_min_chan, (alpha_a + N_cand) / (beta_a + E_eff))
+        max_rate_bump = a_hat_max / (sqrt(2π) * sigma_prior)
+
+        ln_Z0 = logccdf(Gamma(alpha_a, 1.0 / beta_a), a_min_chan)
+        bound_delta_ln_Z = -ln_Z0
+        max_gain_per_spike = max_rate_bump > lam0_coarse ? log(1.0 + max_rate_bump / lam0_coarse) : 0.0
+        max_possible_llr = N_cand * max_gain_per_spike + bound_delta_ln_Z
+        if max_possible_llr <= occam_birth
+            best_cands[chan] = CandidateBirth(false, chan, -Inf, 0.0, Inf)
+            continue
+        end
+
+        perm_cand = sortperm(cand_times_buf)
+        candidate_rel_times = cand_times_buf[perm_cand]
+        candidate_spks = cand_spks_buf[perm_cand]
 
         delta = 3.5 * sigma_prior
         subsample_step = 0.5 * sigma_prior
@@ -901,6 +961,8 @@ function detect_and_birth_or_split_packets!(
 
         left_ptr = 1
         right_ptr = 1
+
+        lam0_chan = compute_effective_bg_rate(chan, 0.5 * (s_left + s_right), occurrences, bg_rates, ou_ctx)
 
         for i in 1:N_cand
             t_cand = candidate_rel_times[i]
@@ -932,7 +994,7 @@ function detect_and_birth_or_split_packets!(
                 sum_w += exp(-0.5 * (dt * dt) / var_prior)
             end
             a_cand = (alpha_a + sum_w) / (beta_a + E_eff)
-            lam0 = compute_effective_bg_rate(chan, t_cand, occurrences, bg_rates, ou_ctx)
+            lam0 = lam0_chan
             a_min = sqrt(2π) * sigma_prior * max(lam0, 1e-12)
             if a_cand <= a_min
                 continue
@@ -992,81 +1054,112 @@ function detect_and_birth_or_split_packets!(
                     break
                 end
             end
-            unimodal_overlap && continue
-
-            # Existing-Packet Envelope Dilution Tax on Birth
-            new_env_left = min(env_left, mu_refined - 4.0 * sigma_prior)
-            new_env_right = max(env_right, mu_refined + 4.0 * sigma_prior)
-            new_proposal_support = max(new_env_right - new_env_left, 6.0 * sigma_prior)
-            tax_dilation = 0.0
-            P_curr = length(m.packets)
-            if new_proposal_support > proposal_support && proposal_support > 0.0
-                tax_dilation = Float64(P_curr) * log(new_proposal_support / proposal_support)
+            if unimodal_overlap
+                best_cands[chan] = CandidateBirth(false, chan, -Inf, 0.0, Inf)
+            else
+                best_cands[chan] = CandidateBirth(true, chan, best_llr, mu_refined, occam_birth)
             end
-            occam_birth_actual = occam_birth + tax_dilation
-            if best_llr <= occam_birth_actual
-                continue
-            end
-
-            P_new = length(m.packets) + 1
-            init_mass = (alpha_a + 1.0) / (beta_a + E_m)
-            new_pkt = Packet(P_new, chan, mu_refined, var_prior, max(init_mass, 0.05))
-            push!(m.packets, new_pkt)
-
-            R_max = size(m.W, 1)
-            new_W = zeros(Float64, R_max, P_new)
-            new_W[:, 1:(P_new-1)] = m.W
-            m.W = new_W
-            push!(m.chan_to_packets[chan], P_new)
-
-            for occ in occurrences
-                push!(occ.counts, 0)
-                push!(occ.sum_t, 0.0)
-                push!(occ.sum_t2, 0.0)
-            end
-
-            sigma_new = sqrt(var_prior)
-            spk_list = (chan_spikes !== nothing) ? chan_spikes[chan] : Int[]
-            if isempty(spk_list)
-                for (idx_s, c_s) in enumerate(spike_chan)
-                    if c_s == chan
-                        push!(spk_list, idx_s)
-                    end
-                end
-            end
-
-            harvested_count = 0
-            if !isempty(spk_list)
-                spk_view = view(spike_t, spk_list)
-                for occ in occurrences
-                    t_pred = occ.tau + mu_refined
-                    i_a = searchsortedfirst(spk_view, t_pred - 3.0 * sigma_new)
-                    i_b = searchsortedlast(spk_view, t_pred + 3.0 * sigma_new)
-                    for s_idx in i_a:i_b
-                        j = spk_list[s_idx]
-                        as = assign[j]
-                        if as.event_id == 0
-                            assign[j] = SpikeAssignment(occ.id, P_new)
-                            push!(occ.members, j)
-                            occ.counts[P_new] += 1
-                            occ.sum_t[P_new] += spike_t[j]
-                            occ.sum_t2[P_new] += spike_t[j] * spike_t[j]
-                            harvested_count += 1
-                        end
-                    end
-                end
-            end
-
-            lam0_birth_refined = compute_effective_bg_rate(chan, mu_refined, occurrences, bg_rates, ou_ctx)
-            a_min_birth = sqrt(2π) * sigma_prior * max(lam0_birth_refined, 1e-12)
-            new_pkt.mass = max((alpha_a + Float64(harvested_count)) / (beta_a + E_eff), a_min_birth + 1e-4)
-            birthed_any = true
-            env_left = new_env_left
-            env_right = new_env_right
-            proposal_support = new_proposal_support
-            s_left = env_left - delta_reach
-            s_right = env_right + delta_reach
+        else
+            best_cands[chan] = CandidateBirth(false, chan, -Inf, 0.0, Inf)
         end
+    end
+
+    # Step 2: Sequential main-thread acceptance, Occam re-check, and motif mutation
+    for chan in 1:N_channels
+        cand = best_cands[chan]
+        !cand.valid && continue
+
+        if !allow_multi_packets && length(m.chan_to_packets[chan]) >= 1
+            continue
+        end
+
+        # Re-enforce Rayleigh separation against live packets on this channel
+        unimodal_overlap = false
+        for p in m.chan_to_packets[chan]
+            existing_sigma = sqrt(m.packets[p].var)
+            rayleigh_dist = max(tau_refractory, 2.0 * sqrt(2.0) * sigma_prior, 2.0 * sqrt(var_prior + existing_sigma * existing_sigma))
+            if abs(cand.mu_refined - m.packets[p].mu) < rayleigh_dist
+                unimodal_overlap = true
+                break
+            end
+        end
+        unimodal_overlap && continue
+
+        # Existing-Packet Envelope Dilution Tax on Birth
+        new_env_left = min(env_left, cand.mu_refined - 4.0 * sigma_prior)
+        new_env_right = max(env_right, cand.mu_refined + 4.0 * sigma_prior)
+        new_proposal_support = max(new_env_right - new_env_left, 6.0 * sigma_prior)
+        tax_chan_live = compute_channel_tax_birth(chan, m.chan_to_packets, length(m.packets), N_channels, new_proposal_support; sigma_prior=sigma_prior)
+        isinf(tax_chan_live) && continue
+
+        tax_dilation = 0.0
+        P_curr = length(m.packets)
+        if new_proposal_support > proposal_support && proposal_support > 0.0
+            tax_dilation = Float64(P_curr) * log(new_proposal_support / proposal_support)
+        end
+        occam_birth_actual = log(new_proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_chan_live + tax_dilation
+        if cand.best_llr <= occam_birth_actual
+            continue
+        end
+
+        P_new = length(m.packets) + 1
+        init_mass = (alpha_a + 1.0) / (beta_a + E_m)
+        new_pkt = Packet(P_new, chan, cand.mu_refined, var_prior, max(init_mass, 0.05))
+        push!(m.packets, new_pkt)
+
+        R_max = size(m.W, 1)
+        new_W = zeros(Float64, R_max, P_new)
+        new_W[:, 1:(P_new-1)] = m.W
+        m.W = new_W
+        push!(m.chan_to_packets[chan], P_new)
+
+        for occ in occurrences
+            push!(occ.counts, 0)
+            push!(occ.sum_t, 0.0)
+            push!(occ.sum_t2, 0.0)
+        end
+
+        sigma_new = sqrt(var_prior)
+        spk_list = (chan_spikes !== nothing) ? chan_spikes[chan] : Int[]
+        if isempty(spk_list)
+            for (idx_s, c_s) in enumerate(spike_chan)
+                if c_s == chan
+                    push!(spk_list, idx_s)
+                end
+            end
+        end
+
+        harvested_count = 0
+        if !isempty(spk_list)
+            spk_view = view(spike_t, spk_list)
+            for occ in occurrences
+                t_pred = occ.tau + cand.mu_refined
+                i_a = searchsortedfirst(spk_view, t_pred - 3.0 * sigma_new)
+                i_b = searchsortedlast(spk_view, t_pred + 3.0 * sigma_new)
+                for s_idx in i_a:i_b
+                    j = spk_list[s_idx]
+                    as = assign[j]
+                    if as.event_id == 0
+                        assign[j] = SpikeAssignment(occ.id, P_new)
+                        push!(occ.members, j)
+                        occ.counts[P_new] += 1
+                        occ.sum_t[P_new] += spike_t[j]
+                        occ.sum_t2[P_new] += spike_t[j] * spike_t[j]
+                        harvested_count += 1
+                    end
+                end
+            end
+        end
+
+        lam0_birth_refined = compute_effective_bg_rate(chan, cand.mu_refined, occurrences, bg_rates, ou_ctx)
+        a_min_birth = sqrt(2π) * sigma_prior * max(lam0_birth_refined, 1e-12)
+        new_pkt.mass = max((alpha_a + Float64(harvested_count)) / (beta_a + E_eff), a_min_birth + 1e-4)
+        birthed_any = true
+        env_left = new_env_left
+        env_right = new_env_right
+        proposal_support = new_proposal_support
+        s_left = env_left - delta_reach
+        s_right = env_right + delta_reach
     end
 
     if birthed_any

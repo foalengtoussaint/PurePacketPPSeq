@@ -194,7 +194,8 @@ function detect_and_birth_new_motifs!(
                     lam_s = if ou_ctx !== nothing
                         exp(evaluate_background_log_intensity(ou_ctx, bg_rates, c, t_s))
                     else
-                        (c <= length(bg_rates)) ? max(bg_rates[c], 1e-12) : 0.5
+                        min_prior = 1.0 / (1.0 + T_total)
+                        (c <= length(bg_rates)) ? max(bg_rates[c], min_prior) : 0.5
                     end
                     bump = a_post * exp(-0.5 * (dt * dt) / var_prior) / (sqrt(2π) * sigma_prior)
                     llr_p += log(max(bump / lam_s, 1.0))

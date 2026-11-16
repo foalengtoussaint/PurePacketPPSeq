@@ -151,7 +151,9 @@ Evaluates continuous background log-intensity on channel c at time t:
     c::Int,
     t::Float64
 )::Float64
-    base_rate = max(bg_rates[c], 1e-12)
+    T_total_ou = isempty(ctx.t_net) ? 2114.29 : ctx.t_net[end]
+    min_prior_bg = 1.0 / (1.0 + T_total_ou)
+    base_rate = max(bg_rates[c], min_prior_bg)
     reg = (c <= length(ctx.channel_region)) ? ctx.channel_region[c] : 1
 
     # Regional arousal x_r(t)

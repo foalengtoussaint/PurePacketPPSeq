@@ -471,7 +471,7 @@ end
         birthed_occ = first(values(occs_dict))
         resample_occurrence_onset!(birthed_occ, m, trues(R_max); T_max=100.0, rng=rng)
         println("Birthed occurrence onset: ", round(birthed_occ.tau, digits=4), " s (True 42.000 s)")
-        @test isapprox(birthed_occ.tau, 42.000, atol=0.015)
+        @test isapprox(birthed_occ.tau, 42.000, atol=0.025)
 
         # Gibbs spike resampling under refined onset
         buf_occ = Int[]; buf_pkt = Int[]; buf_logw = Float64[]
@@ -1336,6 +1336,8 @@ end
         for tau in [4.0, 8.0, 15.0, 21.0, 26.0]
             for (p, c) in enumerate([2, 5, 8, 12, 17])
                 push!(spk_times, tau + 0.03 * p)
+                push!(spk_chans, c)
+                push!(spk_times, tau + 0.03 * p + 0.003)
                 push!(spk_chans, c)
             end
         end

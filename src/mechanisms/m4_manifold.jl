@@ -305,7 +305,8 @@ Prunes dormant manifold dimensions exceeding Cramér-Rao threshold alpha_prune =
 function prune_inactive_axes!(state::ARDManifoldState, motifs::Vector{PurePacketMotif})
     for r in 1:length(state.active_mask)
         if state.active_mask[r]
-            if state.alpha[r] > state.prune_threshold
+            sum_w2 = sum(sum(m.W[r, p]^2 for p in 1:length(m.packets); init=0.0) for m in motifs; init=0.0)
+            if state.alpha[r] > max(state.prune_threshold, 1.0e6) || sum_w2 < 1e-6
                 state.active_mask[r] = false
                 state.alpha[r] = 1.0e6
                 for m in motifs
@@ -403,6 +404,79 @@ function check_and_birth_axis!(
                 end
             end
         end
+
+        # Rank-1 SVD (Alternating Least Squares) Initialization on Axis Birth
+        for m in values(motifs)
+            P = length(m.packets)
+            P == 0 && continue
+            occ_m = [occ for occ in occurrences if occ.motif == m.id]
+            E_m = length(occ_m)
+            E_m < 2 && continue
+
+            res_mat = [zeros(Float64, P) for _ in 1:E_m]
+            kap_mat = [zeros(Float64, P) for _ in 1:E_m]
+            for (e_idx, occ) in enumerate(occ_m)
+                for p in 1:P
+                    c = occ.counts[p]
+                    c == 0 && continue
+                    mean_t = occ.sum_t[p] / c
+                    target_t = occ.tau + m.packets[p].mu
+                    pred_s = 0.0
+                    for r in 1:min(size(m.W, 1), length(occ.u), length(state.active_mask))
+                        if state.active_mask[r] && r != target_r
+                            pred_s += m.W[r, p] * occ.u[r]
+                        end
+                    end
+                    res_mat[e_idx][p] = (mean_t - target_t) - pred_s
+                    kap_mat[e_idx][p] = c / m.packets[p].var
+                end
+            end
+
+            u_init = randn(rng, E_m)
+            w_init = zeros(Float64, P)
+            for iter in 1:3
+                for p in 1:P
+                    num = 0.0
+                    den = 500.0
+                    for e in 1:E_m
+                        kap = kap_mat[e][p]
+                        kap <= 0.0 && continue
+                        num += kap * u_init[e] * res_mat[e][p]
+                        den += kap * u_init[e] * u_init[e]
+                    end
+                    w_init[p] = num / den
+                end
+                for e in 1:E_m
+                    num = 0.0
+                    den = 1.0
+                    for p in 1:P
+                        kap = kap_mat[e][p]
+                        kap <= 0.0 && continue
+                        num += kap * w_init[p] * res_mat[e][p]
+                        den += kap * w_init[p] * w_init[p]
+                    end
+                    u_init[e] = num / den
+                end
+            end
+
+            std_u = std(u_init)
+            if std_u > 1e-4
+                u_init ./= std_u
+                w_init .*= std_u
+            end
+
+            tot_prec = sum(1.0 / m.packets[p].var for p in 1:P)
+            if tot_prec > 0.0
+                w_mean = sum((1.0 / m.packets[p].var) * w_init[p] for p in 1:P) / tot_prec
+                w_init .-= w_mean
+            end
+
+            @views m.W[target_r, :] .= w_init
+            for (e_idx, occ) in enumerate(occ_m)
+                occ.u[target_r] = u_init[e_idx]
+            end
+        end
+
         return (true, chi2_ratio)
     end
 
