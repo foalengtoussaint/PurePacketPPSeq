@@ -243,7 +243,10 @@ function detect_and_birth_new_motifs!(
             W_eff = max(temp_m.W_window, 6.0 * sigma_prior)
             tax_per_pkt = log(W_eff / (sqrt(2π) * sigma_prior)) + log(beta_a + 1.0)
             tax_chan = -compute_motif_channel_log_prior(temp_m.chan_to_packets, k, N_channels, W_eff; sigma_prior=sigma_prior)
-            tax_dict = max(0.0, tax_crp) + k * tax_per_pkt + tax_chan
+            L_cand = k > 1 ? (maximum(pkts_cand[p].mu for p in 1:k) - minimum(pkts_cand[p].mu for p in 1:k)) : 0.0
+            sig_bar_cand = mean(sqrt(max(pkts_cand[p].var, 1e-8)) for p in 1:k)
+            tax_span_cand = Float64(k) * log(1.0 + max(0.0, L_cand) / max(sig_bar_cand, 1e-6))
+            tax_dict = max(0.0, tax_crp) + k * tax_per_pkt + tax_chan + tax_span_cand
             tax_e0 = log((beta_m + T_total) / max(W_eff, 1e-6)) + log(1.0 / alpha_m)
 
             # Exact Combinatorial Model Selection Prior: ln \binom{K_cand}{k}
@@ -485,7 +488,10 @@ function prune_dead_motifs!(
                 tax_per_pkt = log(W_eff / (sqrt(2π) * sigma_prior)) + log(beta_a + 1.0)
                 N_chans = (bg_rates !== nothing) ? length(bg_rates) : length(m.chan_to_packets)
                 tax_chan = -compute_motif_channel_log_prior(m.chan_to_packets, P_m, N_chans, W_eff; sigma_prior=sigma_prior)
-                tax_dict = max(0.0, tax_crp) + P_m * tax_per_pkt + tax_chan
+                L_m = P_m > 1 ? (maximum(p.mu for p in m.packets) - minimum(p.mu for p in m.packets)) : 0.0
+                sig_bar_m = P_m > 0 ? mean(sqrt(max(p.var, 1e-8)) for p in m.packets) : sigma_prior
+                tax_span_m = Float64(P_m) * log(1.0 + max(0.0, L_m) / max(sig_bar_m, 1e-6))
+                tax_dict = max(0.0, tax_crp) + P_m * tax_per_pkt + tax_chan + tax_span_m
 
                 centroid_tax = 0.5 * sum(
                     begin

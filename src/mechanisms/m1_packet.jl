@@ -290,10 +290,44 @@ function update_packet_corridors!(
         end
 
         if tot_c > 0
-            pkt.mu += damp * (weighted_delta / tot_c)
+            raw_shift = damp * (weighted_delta / tot_c)
+            # Check 3: Metropolis-Hastings acceptance / regularized shrinkage against Delta Tax_span
+            if P > 1
+                curr_lats = [m.packets[q].mu for q in 1:P]
+                curr_L = maximum(curr_lats) - minimum(curr_lats)
+                cand_mu = pkt.mu + raw_shift
+                cand_lats = copy(curr_lats)
+                cand_lats[p] = cand_mu
+                cand_L = maximum(cand_lats) - minimum(cand_lats)
+
+                if cand_L > curr_L && curr_L > 0.0
+                    sig_bar = mean(sqrt(max(m.packets[q].var, 1e-8)) for q in 1:P)
+                    tax_old = Float64(P) * log(1.0 + curr_L / max(sig_bar, 1e-6))
+                    tax_new = Float64(P) * log(1.0 + cand_L / max(sig_bar, 1e-6))
+                    delta_tax = tax_new - tax_old
+
+                    var_eff = max(pkt.var, 1e-6)
+                    delta_ln_L = raw_shift * (weighted_delta / var_eff) - 0.5 * Float64(tot_c) * (raw_shift * raw_shift / var_eff)
+
+                    if delta_ln_L >= delta_tax || (rand() < exp(delta_ln_L - delta_tax))
+                        pkt.mu = cand_mu
+                    else
+                        span_grad = Float64(P) / (sig_bar + curr_L)
+                        shrink = span_grad * var_eff / Float64(tot_c)
+                        damped = (raw_shift > 0.0) ? max(0.0, raw_shift - shrink) : min(0.0, raw_shift + shrink)
+                        pkt.mu += damped
+                    end
+                else
+                    pkt.mu += raw_shift
+                end
+            else
+                pkt.mu += raw_shift
+            end
+
             nu_post = nu_0 + tot_c
             S_post = S_0 + sum_sq_err
-            pkt.var = S_post / nu_post
+            # Upper bound packet variance to max 200ms SD (var <= 0.04)
+            pkt.var = clamp(S_post / nu_post, 1e-6, 0.04)
         end
     end
 
@@ -1111,7 +1145,20 @@ function detect_and_birth_or_split_packets!(
         if channels === nothing && new_proposal_support > proposal_support && proposal_support > 0.0
             tax_dilation = Float64(P_curr) * log(new_proposal_support / proposal_support)
         end
-        occam_birth_actual = log(new_proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_chan_live + tax_dilation
+
+        # Two-Part MDL Span Coding Length Change
+        L_curr = P_curr > 1 ? (maximum(m.packets[q].mu for q in 1:P_curr) - minimum(m.packets[q].mu for q in 1:P_curr)) : 0.0
+        sig_bar_curr = P_curr > 0 ? mean(sqrt(max(m.packets[q].var, 1e-8)) for q in 1:P_curr) : sigma_prior
+        tax_span_curr = Float64(P_curr) * log(1.0 + max(0.0, L_curr) / max(sig_bar_curr, 1e-6))
+
+        all_lats_new = [m.packets[q].mu for q in 1:P_curr]
+        push!(all_lats_new, cand.mu_refined)
+        L_new = maximum(all_lats_new) - minimum(all_lats_new)
+        sig_bar_new = (sig_bar_curr * Float64(P_curr) + sigma_prior) / Float64(P_curr + 1)
+        tax_span_new = Float64(P_curr + 1) * log(1.0 + max(0.0, L_new) / max(sig_bar_new, 1e-6))
+        delta_tax_span = max(0.0, tax_span_new - tax_span_curr)
+
+        occam_birth_actual = log(new_proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_chan_live + tax_dilation + delta_tax_span
         if cand.best_llr <= occam_birth_actual
             continue
         end

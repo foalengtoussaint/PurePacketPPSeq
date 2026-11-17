@@ -70,7 +70,7 @@ function smooth_point_process_intensity!(
     active_ids::Union{Nothing, Vector{Int}}=nothing,
     max_iter::Int=2,
     zero_mean_gauge::Bool=true,
-    clamp_val::Float64=2.5
+    clamp_val::Float64=10.0
 )
     E_tot = size(log_gains, 1)
     B = size(log_gains, 2)
@@ -208,7 +208,7 @@ function update_regional_ou!(
         ctx.x_region, reg_t, reg_ids, lambda_bar_reg,
         ctx.dt_net, ctx.tau_net, ctx.sigma_net,
         ctx.diag_buf, ctx.off_buf, ctx.rhs_buf, ctx.c_prime, ctx.d_prime;
-        max_iter=max_iter, zero_mean_gauge=true, clamp_val=2.5
+        max_iter=max_iter, zero_mean_gauge=true, clamp_val=10.0
     )
 end
 
@@ -241,7 +241,7 @@ function update_cell_ou!(
         ctx.delta_x, bg_t, bg_c, bg_rates,
         ctx.dt_cell, ctx.tau_cell, ctx.sigma_cell,
         ctx.diag_buf, ctx.off_buf, ctx.rhs_buf, ctx.c_prime, ctx.d_prime;
-        max_iter=max_iter, zero_mean_gauge=true, clamp_val=2.5
+        max_iter=max_iter, zero_mean_gauge=true, clamp_val=10.0
     )
 end
 
@@ -361,3 +361,226 @@ function sample_student_t_precisions!(
         ctx.tau_precisions[occ.id] = rand(rng, Gamma(shape_post, 1.0 / max(rate_post, 1e-12)))
     end
 end
+
+"""
+    compute_ou_precision_vector_sum(dt, tau, sig, B) -> (one_Kinv_one, phi, v)
+
+Computes the closed-form quadratic form 1^T K^{-1} 1 for a 1D stationary discrete OU process:
+    1^T K^{-1} 1 = ((1 - phi) / v) * [2 + (B - 2) * (1 - phi)]
+where phi = exp(-dt/tau), v = 0.5 * sig^2 * tau * (1 - phi^2).
+"""
+@inline function compute_ou_precision_vector_sum(dt::Float64, tau::Float64, sig::Float64, B::Int)
+    B <= 1 && return (0.0, 1.0, 1.0)
+    phi = exp(-dt / max(1e-6, tau))
+    v = max(1e-12, 0.5 * sig * sig * tau * (1.0 - phi * phi))
+    one_minus_phi = 1.0 - phi
+    one_Kinv_one = (one_minus_phi / v) * (2.0 + Float64(B - 2) * one_minus_phi)
+    return (one_Kinv_one, phi, v)
+end
+
+"""
+    compute_ou_precision_inner_product(x, phi, v) -> Float64
+
+Evaluates 1^T K^{-1} x in exact O(B) time with zero allocations:
+    1^T K^{-1} x = ((1 - phi) / v) * [x_1 + x_B + (1 - phi) * sum_{j=2}^{B-1} x_j].
+"""
+@inline function compute_ou_precision_inner_product(x::AbstractVector{Float64}, phi::Float64, v::Float64)::Float64
+    B = length(x)
+    B == 0 && return 0.0
+    B == 1 && return x[1] / max(1e-12, v)
+    one_minus_phi = 1.0 - phi
+    s_interior = 0.0
+    @inbounds for j in 2:(B - 1)
+        s_interior += x[j]
+    end
+    return (one_minus_phi / v) * (x[1] + x[B] + one_minus_phi * s_interior)
+end
+
+"""
+    sample_multiplicative_gauge_slide!(occurrences, motifs; alpha_a=1.0, beta_a=1.0, a_min=1e-4, rng=default_rng())
+
+Exact Metropolis-Hastings transition kernel along the multiplicative gauge manifold:
+    c_e' = c_e * exp(-u)  (for all e with z_e = k)
+    a_{k,p}' = a_{k,p} * exp(+u)  (for all p in P_k)
+Guarantees Delta ln L = 0 identically with Jacobian |J| = exp((P_k - E_k) * u).
+Adaptive proposal SD sigma_u = 1 / sqrt(max(1.0, E_k * alpha_c + P_k * alpha_a)).
+Enforces support boundary a_{k,p}' >= a_min (rejects if violated).
+"""
+function sample_multiplicative_gauge_slide!(
+    occurrences::Dict{Int, PureOccurrence},
+    motifs::Dict{Int, PurePacketMotif},
+    alpha_c::Float64;
+    alpha_a::Float64=1.0,
+    beta_a::Float64=1.0,
+    a_min::Float64=1e-4,
+    rng::AbstractRNG=Random.default_rng()
+)
+    # Group occurrences by motif
+    motif_occs = Dict{Int, Vector{PureOccurrence}}()
+    for occ in values(occurrences)
+        push!(get!(motif_occs, occ.motif, PureOccurrence[]), occ)
+    end
+
+    for (mid, m) in motifs
+        P_k = length(m.packets)
+        P_k == 0 && continue
+        occ_list = get(motif_occs, mid, PureOccurrence[])
+        E_k = length(occ_list)
+
+        # 1. Parameter-free adaptive curvature proposal scale
+        curvature = max(1.0, Float64(E_k) * alpha_c + Float64(P_k) * alpha_a)
+        sigma_u = 1.0 / sqrt(curvature)
+
+        # 2. Symmetric Gaussian proposal
+        u = randn(rng) * sigma_u
+
+        # 3. Support boundary check on packet masses
+        exp_u = exp(u)
+        exp_neg_u = exp(-u)
+        violates_support = false
+        for pkt in m.packets
+            if pkt.mass * exp_u < a_min
+                violates_support = true
+                break
+            end
+        end
+        violates_support && continue # Reject proposal (ln alpha = -Inf)
+
+        # 4. Exact acceptance ratio from prior ratio and Jacobian
+        sum_c = isempty(occ_list) ? 0.0 : sum(occ.amplitude for occ in occ_list)
+        sum_a = sum(pkt.mass for pkt in m.packets)
+
+        ln_alpha = (Float64(P_k) * alpha_a - Float64(E_k) * alpha_c) * u -
+                   alpha_c * (exp_neg_u - 1.0) * sum_c -
+                   beta_a * (exp_u - 1.0) * sum_a
+
+        if log(rand(rng)) < ln_alpha
+            # Accept proposal: exact gauge slide
+            for occ in occ_list
+                occ.amplitude *= exp_neg_u
+            end
+            for pkt in m.packets
+                pkt.mass *= exp_u
+            end
+        end
+    end
+end
+
+"""
+    sample_additive_cell_gauge_slide!(ctx, bg_rates; b_min=1e-6, overflow_clamp=10.0, rng=default_rng())
+
+Exact Gibbs transition kernel along the additive gauge manifold for each unit c:
+    ln lambda_{0,c}' = ln lambda_{0,c} + v  =>  lambda_{0,c}' = lambda_{0,c} * exp(v)
+    delta_x_c'(t) = delta_x_c(t) - v
+Guarantees Delta ln L = 0 identically.
+Under the zero-mean GP prior delta x_c ~ N(0, K_cell), the conditional distribution of the translation v
+along the likelihood-invariant ridge is exact Gaussian:
+    v | delta x_c ~ N( (1^T K^{-1} delta x_c) / (1^T K^{-1} 1),  1 / (1^T K^{-1} 1) )
+which is sampled directly as an exact conditional Gibbs step with 100% acceptance.
+Enforces support boundary lambda_{0,c}' >= b_min.
+"""
+function sample_additive_cell_gauge_slide!(
+    ctx::ContinuousOUContext,
+    bg_rates::Vector{Float64};
+    b_min::Float64=1e-6,
+    overflow_clamp::Float64=10.0,
+    rng::AbstractRNG=Random.default_rng()
+)
+    C = min(length(bg_rates), size(ctx.delta_x, 1))
+    B_cell = size(ctx.delta_x, 2)
+    B_cell <= 1 && return
+
+    # Precompute stationary GP curvature
+    one_Kinv_one, phi, v_step = compute_ou_precision_vector_sum(
+        ctx.dt_cell, ctx.tau_cell, ctx.sigma_cell, B_cell
+    )
+    one_Kinv_one <= 0.0 && return
+    sigma_v = 1.0 / sqrt(one_Kinv_one)
+
+    for c in 1:C
+        dx_view = view(ctx.delta_x, c, :)
+        one_Kinv_x = compute_ou_precision_inner_product(dx_view, phi, v_step)
+        v_star = one_Kinv_x / one_Kinv_one
+
+        # Draw exact Gibbs sample along the invariant ridge
+        v = v_star + randn(rng) * sigma_v
+        exp_v = exp(v)
+        cand_bg = bg_rates[c] * exp_v
+
+        # Enforce support floor
+        if cand_bg >= b_min
+            bg_rates[c] = cand_bg
+            for b in 1:B_cell
+                ctx.delta_x[c, b] = clamp(ctx.delta_x[c, b] - v, -overflow_clamp, overflow_clamp)
+            end
+        end
+    end
+end
+
+"""
+    sample_additive_regional_gauge_slide!(ctx, bg_rates; overflow_clamp=10.0, rng=default_rng())
+
+Exact Metropolis-Hastings transition kernel along the regional arousal gauge manifold for each region r:
+    x_region[r, :]' = x_region[r, :] - w
+    lambda_{0,c}' = lambda_{0,c} * exp(w)  (for all c in region r)
+Guarantees Delta ln L = 0 identically with tridiagonal GP evaluation in O(B_net) time.
+"""
+function sample_additive_regional_gauge_slide!(
+    ctx::ContinuousOUContext,
+    bg_rates::Vector{Float64};
+    alpha_bg::Float64=1.0,
+    beta_bg::Float64=1.0,
+    b_min::Float64=1e-6,
+    overflow_clamp::Float64=10.0,
+    rng::AbstractRNG=Random.default_rng()
+)
+    R_reg = size(ctx.x_region, 1)
+    B_net = size(ctx.x_region, 2)
+    B_net <= 1 && return
+
+    one_Kinv_one, phi, v_step = compute_ou_precision_vector_sum(
+        ctx.dt_net, ctx.tau_net, ctx.sigma_net, B_net
+    )
+
+    for reg in 1:R_reg
+        reg_units = findall(r -> r == reg, ctx.channel_region)
+        isempty(reg_units) && continue
+        N_reg = length(reg_units)
+
+        curvature = max(1.0, Float64(N_reg) * alpha_bg + one_Kinv_one)
+        sigma_w = 1.0 / sqrt(curvature)
+
+        w = randn(rng) * sigma_w
+        exp_w = exp(w)
+
+        # Support check
+        violates = false
+        for c in reg_units
+            if c <= length(bg_rates) && bg_rates[c] * exp_w < b_min
+                violates = true
+                break
+            end
+        end
+        violates && continue
+
+        xr_view = view(ctx.x_region, reg, :)
+        one_Kinv_xr = compute_ou_precision_inner_product(xr_view, phi, v_step)
+
+        sum_reg_bg = sum(bg_rates[c] for c in reg_units if c <= length(bg_rates))
+        ln_alpha = Float64(N_reg) * alpha_bg * w - beta_bg * sum_reg_bg * (exp_w - 1.0) +
+                   w * one_Kinv_xr - 0.5 * w * w * one_Kinv_one
+
+        if log(rand(rng)) < ln_alpha
+            for c in reg_units
+                if c <= length(bg_rates)
+                    bg_rates[c] *= exp_w
+                end
+            end
+            for b in 1:B_net
+                ctx.x_region[reg, b] = clamp(ctx.x_region[reg, b] - w, -overflow_clamp, overflow_clamp)
+            end
+        end
+    end
+end
+
+

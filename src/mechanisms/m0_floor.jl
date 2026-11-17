@@ -173,3 +173,5 @@ Evaluates int_{t1}^{t2} lambda_c^{(0)}(s) ds for Time-Rescaling theorem validati
 
     return bg_rate_c * dt * exp(x_r + dx_c)
 end
+
+

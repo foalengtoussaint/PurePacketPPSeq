@@ -501,6 +501,10 @@ function step_pure_packet_sweep!(
         alpha_bg=1.0, beta_bg=1.0, rng=rng
     )
 
+    # 13. Exact Metropolis-Hastings Gauge Slides (Principled Invariant Ridge Transitions)
+    sample_multiplicative_gauge_slide!(occurrences, motifs, ou_ctx.alpha_c; alpha_a=alpha_a, beta_a=beta_a, rng=rng)
+    sample_additive_cell_gauge_slide!(ou_ctx, bg_rates; rng=rng)
+
     update_vigor_shape!(ou_ctx, occurrences; max_iter=10, tol=1e-6)
     sample_continuous_occurrence_amplitudes!(occurrences, motifs, ou_ctx.alpha_c; rng=rng)
     sample_student_t_precisions!(ou_ctx, occurrences, count(ard_state.active_mask); rng=rng)

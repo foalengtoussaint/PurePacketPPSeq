@@ -136,6 +136,14 @@ export
     update_motif_ou!,
     update_continuous_background_rates!,
 
+    # Mechanism m=5: Exact Metropolis-Hastings Gauge Slides
+    compute_ou_precision_vector_sum,
+    compute_ou_precision_inner_product,
+    sample_multiplicative_gauge_slide!,
+    sample_additive_cell_gauge_slide!,
+    sample_additive_regional_gauge_slide!,
+    compute_motif_span_tax,
+
     # Mechanism m=5: Vigor & Student-t Precisions
     update_vigor_shape!,
     sample_continuous_occurrence_amplitudes!,
