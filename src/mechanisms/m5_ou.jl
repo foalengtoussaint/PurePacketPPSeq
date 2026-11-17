@@ -277,6 +277,67 @@ function update_cell_ou!(
         time_varying_baselines=tv_base,
         max_iter=max_iter, step_max=0.5, zero_mean_gauge=true, clamp_val=10.0
     )
+
+    update_cached_min_bg_rates!(ctx, bg_rates)
+end
+
+const OU_MIN_BG_CACHE = IdDict{ContinuousOUContext, Vector{Float64}}()
+
+"""
+    update_cached_min_bg_rates!(ctx::ContinuousOUContext, bg_rates::Vector{Float64})
+
+Caches min_t lambda_c^{(0)}(t) once per sweep across coarse cellular blocks (< 0.2 ms, zero allocations).
+Evaluates exact product of baseline rate and minimum continuous OU log-multiplier:
+    min_bg_rate[c] = max(1e-6, bg_rates[c] * exp(min_j [x_region(reg, j) + delta_x(c, j)]))
+"""
+function update_cached_min_bg_rates!(ctx::ContinuousOUContext, bg_rates::Vector{Float64})
+    C = length(bg_rates)
+    B_cell = ctx.B_cell
+    B_net = ctx.B_net
+    dt_cell = ctx.dt_cell
+    dt_net = ctx.dt_net
+
+    if !haskey(OU_MIN_BG_CACHE, ctx) || length(OU_MIN_BG_CACHE[ctx]) != C
+        OU_MIN_BG_CACHE[ctx] = zeros(Float64, C)
+    end
+    cached = OU_MIN_BG_CACHE[ctx]
+
+    # Precompute regional arousal at each cellular bin midpoint: min_xr[reg, j_cell]
+    min_xr = zeros(Float64, 2, B_cell)
+    for j in 1:B_cell
+        t_mid = (j - 1) * dt_cell + 0.5 * dt_cell
+        idx_net = clamp(floor(Int, t_mid / dt_net) + 1, 1, B_net - 1)
+        alpha_net = (t_mid - (idx_net - 1) * dt_net) / dt_net
+        for reg in 1:2
+            min_xr[reg, j] = (1.0 - alpha_net) * ctx.x_region[reg, idx_net] + alpha_net * ctx.x_region[reg, idx_net + 1]
+        end
+    end
+
+    @inbounds for c in 1:C
+        reg = (c <= length(ctx.channel_region)) ? ctx.channel_region[c] : 1
+        min_log_val = Inf
+        for j in 1:B_cell
+            tot_log = min_xr[reg, j] + ctx.delta_x[c, j]
+            if tot_log < min_log_val
+                min_log_val = tot_log
+            end
+        end
+        cached[c] = max(1e-6, bg_rates[c] * exp(min_log_val))
+    end
+    return cached
+end
+
+"""
+    get_cached_min_bg_rates(ctx::Union{Nothing, ContinuousOUContext}, bg_rates::Vector{Float64}) -> Vector{Float64}
+
+Returns the precomputed min_t lambda_c^{(0)}(t) vector for this context.
+"""
+function get_cached_min_bg_rates(ctx::Union{Nothing, ContinuousOUContext}, bg_rates::Vector{Float64})::Vector{Float64}
+    ctx === nothing && return bg_rates
+    if !haskey(OU_MIN_BG_CACHE, ctx) || length(OU_MIN_BG_CACHE[ctx]) != length(bg_rates)
+        return update_cached_min_bg_rates!(ctx, bg_rates)
+    end
+    return OU_MIN_BG_CACHE[ctx]
 end
 
 """

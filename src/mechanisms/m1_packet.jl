@@ -22,6 +22,34 @@ where R_p == 0.0 whenever SNR_p <= 1.0 (Rule 3 SNR pruning from first principles
 end
 
 """
+    compute_max_packet_span(c, n_spk, min_bg_c, P_k, sigma_min, sigma_bar, N_channels; delta_slack=4.0) -> Float64
+
+Exact branch-and-bound outer horizon derived by inverting Two-Part MDL complexity taxes:
+    B_c = sqrt(2π) * sigma_min * min_bg_c
+    R_max(c) = n_spk > B_c ? (n_spk * log(n_spk / B_c) - (n_spk - B_c)) : 0.0
+    R_span_net = max(0.0, R_max(c) + delta_slack - log(N_channels))
+    L_max(c) = sigma_bar * (exp(R_span_net / (P_k + 1)) - 1.0)
+"""
+@inline function compute_max_packet_span(
+    c::Int,
+    n_spk::Real,
+    min_bg_c::Float64,
+    P_k::Int,
+    sigma_min::Float64,
+    sigma_bar::Float64,
+    N_channels::Int;
+    delta_slack::Float64=4.0
+)::Float64
+    B_c = sqrt(2.0 * π) * max(sigma_min, 1e-4) * max(min_bg_c, 1e-6)
+    n_val = Float64(n_spk)
+    R_max = (n_val > B_c) ? (n_val * log(n_val / B_c) - (n_val - B_c)) : 0.0
+    tax_base = log(Float64(max(1, N_channels)))
+    R_span_net = max(0.0, R_max + delta_slack - tax_base)
+    denom = max(1, P_k + 1)
+    return max(sigma_bar, 1e-4) * (exp(R_span_net / denom) - 1.0)
+end
+
+"""
     compute_effective_bg_rate(
         chan::Int,
         mu_p::Float64,
@@ -426,12 +454,20 @@ function prune_dead_packets!(
         curr_right = maximum(m.packets[q].mu + 4.0 * sqrt(m.packets[q].var) for q in 1:P)
         proposal_support_curr = max(curr_right - curr_left, 6.0 * sigma_prior)
 
-        # 2. Single-Step Reversibility Guard:
-        # If mu_p is outside surv_left..surv_right enlarged by search reach delta_reach,
-        # a single birth proposal on the survivors could never reach mu_p.
-        delta_reach = (delta_reach_kw !== nothing) ? delta_reach_kw : max(3.0 * sigma_prior, 0.25)
-        search_left = surv_left - delta_reach
-        search_right = surv_right + delta_reach
+        # 2. Single-Step Reversibility Guard via Inverted MDL Tax Horizon:
+        # Evaluates reverse birth reach L_max(chan; P_surv) for (P - 1) surviving packets.
+        # If mu_p is outside the allowable birth horizon of the reduced motif,
+        # forward birth could never propose recreating this packet under current sweep parameters (alpha_death = 0).
+        P_surv = length(survivors_tentative)
+        min_bg_vec = get_cached_min_bg_rates(ou_ctx, bg_rates)
+        min_bg_c = (min_bg_vec !== nothing && chan <= length(min_bg_vec)) ? min_bg_vec[chan] : 1.0
+        sigma_bar_surv = sum(sqrt(m.packets[q].var) for q in survivors_tentative) / max(1, P_surv)
+        n_spk_c = 2.0  # Canonical single-occurrence burst ceiling
+        L_max_rev = compute_max_packet_span(chan, n_spk_c, min_bg_c, P_surv, sigma_prior, sigma_bar_surv, N_ch_eff)
+
+        delta_reach = (delta_reach_kw !== nothing) ? delta_reach_kw : max(3.0 * sigma_prior, L_max_rev)
+        search_left = min(surv_left, surv_right - delta_reach)
+        search_right = max(surv_right, surv_left + delta_reach)
         is_extremal = (pkt.mu < min_surv_mu) || (pkt.mu > max_surv_mu)
         if is_extremal && (pkt.mu < search_left || pkt.mu > search_right)
             continue
@@ -921,6 +957,7 @@ function detect_and_birth_or_split_packets!(
     end
 
     best_cands = Vector{CandidateBirth}(undef, N_channels)
+    min_bg_vec = get_cached_min_bg_rates(ou_ctx, bg_rates)
 
     # Step 1: Thread-parallel candidate identification across all channels (Read-only)
     Threads.@threads for chan in scan_channels
@@ -935,13 +972,22 @@ function detect_and_birth_or_split_packets!(
             continue
         end
 
+        # Data-driven branch-and-bound horizon for channel chan
+        min_bg_c = (min_bg_vec !== nothing && chan <= length(min_bg_vec)) ? min_bg_vec[chan] : 1.0
+        sigma_bar_chan = isempty(m.packets) ? sigma_prior : (sum(sqrt(p.var) for p in m.packets) / length(m.packets))
+        n_spk_chan = 2.0  # Canonical single-occurrence burst ceiling
+        L_max_c = compute_max_packet_span(chan, n_spk_chan, min_bg_c, P_curr, sigma_prior, sigma_bar_chan, N_ch_eff)
+        reach_c = (delta_reach_kw !== nothing) ? delta_reach_kw : max(3.0 * sigma_prior, L_max_c)
+        s_left_c = min(env_left, env_right - reach_c)
+        s_right_c = max(env_right, env_left + reach_c)
+
         if chan_spikes !== nothing
             spks_c = chan_spikes[chan]
             for s_idx in spks_c
                 if assign[s_idx].event_id == 0
                     t_s = spike_t[s_idx]
-                    i_lo = searchsortedfirst(occ_taus, t_s - s_right)
-                    i_hi = searchsortedlast(occ_taus, t_s - s_left)
+                    i_lo = searchsortedfirst(occ_taus, t_s - s_right_c)
+                    i_hi = searchsortedlast(occ_taus, t_s - s_left_c)
                     if i_lo <= i_hi
                         for i in i_lo:i_hi
                             push!(cand_times_buf, t_s - occ_taus[i])
@@ -952,8 +998,8 @@ function detect_and_birth_or_split_packets!(
             end
         else
             for occ in occurrences
-                t_start = max(0.0, occ.tau + s_left)
-                t_end = occ.tau + s_right
+                t_start = max(0.0, occ.tau + s_left_c)
+                t_end = occ.tau + s_right_c
                 idx_a = searchsortedfirst(spike_t, t_start)
                 idx_b = searchsortedlast(spike_t, t_end)
                 for s_idx in idx_a:idx_b
@@ -1010,11 +1056,11 @@ function detect_and_birth_or_split_packets!(
         left_ptr = 1
         right_ptr = 1
 
-        lam0_chan = compute_effective_bg_rate(chan, 0.5 * (s_left + s_right), occurrences, bg_rates, ou_ctx)
+        lam0_chan = compute_effective_bg_rate(chan, 0.5 * (s_left_c + s_right_c), occurrences, bg_rates, ou_ctx)
 
         for i in 1:N_cand
             t_cand = candidate_rel_times[i]
-            (t_cand < s_left || t_cand > s_right) && continue
+            (t_cand < s_left_c || t_cand > s_right_c) && continue
             (t_cand - last_eval_t < subsample_step) && continue
 
             # Rayleigh Resolvability Boundary (Delta mu >= 2*sqrt(2)*sigma_prior) against all same-channel packets
