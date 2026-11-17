@@ -254,12 +254,12 @@ function export_run(
         streams_dict = Dict("time" => [0.0, T_total], "streams" => [])
     end
 
-    # 7. Multi-scale overview: Keep 100% of foreground sequence spikes, subsample Poisson background
-    println("Preparing multi-scale raster with foreground preservation...")
+    # 7. Multi-scale overview: Keep 100% of foreground sequence spikes, and retain generous Poisson background (350,000 spikes)
+    println("Preparing multi-scale raster with foreground preservation and rich background...")
     fg_indices = findall(>(0), ev_spk)
     bg_indices = findall(==(0), ev_spk)
 
-    target_bg = max(10000, 120000 - length(fg_indices))
+    target_bg = min(length(bg_indices), 350000)
     bg_step = max(1, Int(floor(length(bg_indices) / target_bg)))
     selected_bg = bg_indices[1:bg_step:end]
 

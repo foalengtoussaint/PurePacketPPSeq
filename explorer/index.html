@@ -1359,7 +1359,11 @@
           };
         }
 
-        const usePixelOccupancy = tSpan > 45.0;
+        // Dynamic density-conditioned pixel occupancy:
+        // Automatically activates only when visible spike density exceeds physical horizontal screen resolution!
+        const countInView = Math.max(0, idx1 - idx0);
+        const spikeDensityPerPixel = countInView / Math.max(1, plotW);
+        const usePixelOccupancy = spikeDensityPerPixel > 1.0;
         const lastBgX = new Int32Array(N_neural).fill(-1000);
         const lastFgX = new Int32Array(N_neural).fill(-1000);
 
