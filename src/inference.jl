@@ -148,8 +148,17 @@ function initialize_scratch_model(
         @assert length(bg_rates) == N_channels "Dimension mismatch: provided bg_rates has length $(length(bg_rates)), expected $N_channels"
         init_bg .= max.(0.0001, bg_rates)
     else
-        # Closed-form Memoryless ISI Tail Estimator (Exact Renewal Floor)
-        init_bg .= estimate_isi_tail_baseline(data; sigma_prior=0.015)
+        # Initialize to empirical session firing rate per unit: lambda_{0, c} = max(1e-3, N_c / T)
+        # Guarantees N approx mu at Sweep 0, starting x_region and delta_x near zero-mean equilibrium
+        spk_counts = zeros(Int, N_channels)
+        for c in data.neuron
+            if 1 <= c <= N_channels
+                spk_counts[c] += 1
+            end
+        end
+        for c in 1:N_channels
+            init_bg[c] = max(1e-3, Float64(spk_counts[c]) / max(T_total, 1.0))
+        end
     end
 
     # Setup ARD Manifold (alpha_prune = 6,500 s^-2) & Continuous OU Triad

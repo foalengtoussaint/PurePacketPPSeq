@@ -68,7 +68,9 @@ function smooth_point_process_intensity!(
     c_prime::AbstractVector{Float64},
     d_prime::AbstractVector{Float64};
     active_ids::Union{Nothing, Vector{Int}}=nothing,
-    max_iter::Int=2,
+    time_varying_baselines::Union{Nothing, Matrix{Float64}}=nothing,
+    max_iter::Int=3,
+    step_max::Float64=0.5,
     zero_mean_gauge::Bool=true,
     clamp_val::Float64=10.0
 )
@@ -99,6 +101,7 @@ function smooth_point_process_intensity!(
     r_buf = view(rhs_buf, 1:B)
     cp_buf = view(c_prime, 1:B)
     dp_buf = view(d_prime, 1:B)
+    cand_buf = zeros(Float64, B)
 
     target_ids = active_ids === nothing ? (1:E_tot) : active_ids
 
@@ -111,7 +114,8 @@ function smooth_point_process_intensity!(
             @inbounds for j in 1:B
                 dt_eff = (j == 1 || j == B) ? (0.5 * dt) : dt
                 x_val = log_gains[gid, j]
-                d_j = lam_base * dt_eff * exp(x_val)
+                lam_j = (time_varying_baselines !== nothing) ? time_varying_baselines[gid, j] : lam_base
+                d_j = lam_j * dt_eff * exp(x_val)
 
                 j_diag = (j == 1) ? (inv_v_inf + phi * phi * inv_v) : ((j == B) ? inv_v : (1.0 + phi * phi) * inv_v)
                 d_buf[j] = j_diag + d_j
@@ -122,9 +126,16 @@ function smooth_point_process_intensity!(
             end
 
             solve_sym_tridiagonal!(
-                view(log_gains, gid, :),
+                cand_buf,
                 d_buf, o_buf, r_buf, cp_buf, dp_buf
             )
+
+            # Trust-region step limiting: clamp step |Delta x_b| <= step_max (0.5)
+            # Prevents explosive linear overshoots on exponential link e^x
+            @inbounds for j in 1:B
+                step_j = cand_buf[j] - log_gains[gid, j]
+                log_gains[gid, j] += clamp(step_j, -step_max, step_max)
+            end
         end
 
         if zero_mean_gauge
@@ -182,7 +193,7 @@ function update_regional_ou!(
     spike_t::Vector{Float64},
     spike_neurons::Vector{Int},
     bg_rates::Vector{Float64};
-    max_iter::Int=2
+    max_iter::Int=3
 )
     lambda_bar_reg = zeros(Float64, 2)
     for c in 1:length(bg_rates)
@@ -208,7 +219,7 @@ function update_regional_ou!(
         ctx.x_region, reg_t, reg_ids, lambda_bar_reg,
         ctx.dt_net, ctx.tau_net, ctx.sigma_net,
         ctx.diag_buf, ctx.off_buf, ctx.rhs_buf, ctx.c_prime, ctx.d_prime;
-        max_iter=max_iter, zero_mean_gauge=true, clamp_val=10.0
+        max_iter=max_iter, step_max=0.5, zero_mean_gauge=true, clamp_val=10.0
     )
 end
 
@@ -223,7 +234,7 @@ function update_cell_ou!(
     spike_t::Vector{Float64},
     spike_neurons::Vector{Int},
     bg_rates::Vector{Float64};
-    max_iter::Int=2
+    max_iter::Int=3
 )
     N_spk = length(assign)
     bg_t = Float64[]
@@ -237,11 +248,34 @@ function update_cell_ou!(
         end
     end
 
+    C = length(bg_rates)
+    B_cell = ctx.B_cell
+    tv_base = zeros(Float64, C, B_cell)
+    dt_cell = ctx.dt_cell
+    dt_net = ctx.dt_net
+    B_net = ctx.B_net
+
+    # Precompute effective baseline with already-updated regional arousal:
+    # mu_c(t) = lambda_{0, c} * exp(x_region(t))
+    # Guarantees delta_x only models cell-intrinsic residuals and never double-counts x_region
+    for c in 1:C
+        reg = (c <= length(ctx.channel_region)) ? ctx.channel_region[c] : 1
+        base_c = bg_rates[c]
+        for j in 1:B_cell
+            t_mid = (j - 1) * dt_cell + 0.5 * dt_cell
+            idx_net = clamp(floor(Int, t_mid / dt_net) + 1, 1, B_net - 1)
+            alpha_net = (t_mid - (idx_net - 1) * dt_net) / dt_net
+            xr = (1.0 - alpha_net) * ctx.x_region[reg, idx_net] + alpha_net * ctx.x_region[reg, idx_net + 1]
+            tv_base[c, j] = base_c * exp(xr)
+        end
+    end
+
     smooth_point_process_intensity!(
         ctx.delta_x, bg_t, bg_c, bg_rates,
         ctx.dt_cell, ctx.tau_cell, ctx.sigma_cell,
         ctx.diag_buf, ctx.off_buf, ctx.rhs_buf, ctx.c_prime, ctx.d_prime;
-        max_iter=max_iter, zero_mean_gauge=true, clamp_val=10.0
+        time_varying_baselines=tv_base,
+        max_iter=max_iter, step_max=0.5, zero_mean_gauge=true, clamp_val=10.0
     )
 end
 
