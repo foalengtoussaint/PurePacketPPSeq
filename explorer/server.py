@@ -84,6 +84,9 @@ class ExplorerHandler(http.server.SimpleHTTPRequestHandler):
                 elif endpoint == "streams":
                     self.send_file(run_dir / "streams.json", "application/json")
                     return
+                elif endpoint == "pokes":
+                    self.send_file(run_dir / "pokes.json", "application/json")
+                    return
                 elif endpoint == "event_spikes":
                     spikes_path = run_dir / "spikes.json"
                     if not spikes_path.exists():

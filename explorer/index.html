@@ -31,15 +31,17 @@
       line-height: 1.4;
       user-select: none;
       -webkit-font-smoothing: antialiased;
-      overflow-x: hidden;
-      min-height: 100vh;
+      overflow: hidden; /* Fully fit into single screen without browser scrolling */
+      height: 100vh;
+      width: 100vw;
     }
 
     body {
-      padding: 10px 18px;
+      padding: 8px 16px;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 6px;
+      height: 100vh;
     }
 
     /* Top Navigation Header */
@@ -47,10 +49,11 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding-bottom: 6px;
+      padding-bottom: 4px;
       border-bottom: 1px solid var(--border);
       gap: 16px;
       flex-wrap: wrap;
+      flex-shrink: 0;
     }
 
     .brand-group {
@@ -64,14 +67,14 @@
       color: #fff;
       font-weight: 700;
       font-size: 11px;
-      padding: 3px 8px;
+      padding: 2px 8px;
       border-radius: 6px;
       letter-spacing: 0.5px;
       text-transform: uppercase;
     }
 
     .brand-title {
-      font-size: 17px;
+      font-size: 16px;
       font-weight: 600;
       letter-spacing: -0.2px;
     }
@@ -81,7 +84,7 @@
       align-items: center;
       gap: 8px;
       background: var(--surface);
-      padding: 3px 8px;
+      padding: 2px 8px;
       border-radius: 8px;
       border: 1px solid var(--border);
     }
@@ -90,9 +93,9 @@
       background: var(--surface-alt);
       color: var(--text);
       border: 1px solid var(--border);
-      padding: 5px 12px;
+      padding: 4px 10px;
       border-radius: 6px;
-      font-size: 13px;
+      font-size: 12.5px;
       font-weight: 500;
       cursor: pointer;
       outline: none;
@@ -104,14 +107,14 @@
       background: var(--surface-alt);
       color: var(--text);
       border: 1px solid var(--border);
-      padding: 5px 10px;
+      padding: 4px 10px;
       border-radius: 6px;
-      font-size: 12px;
+      font-size: 11.5px;
       font-weight: 500;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 5px;
       transition: all 0.15s ease;
     }
     .btn-action:hover {
@@ -123,16 +126,17 @@
     .meta-banner {
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 14px;
       background: var(--surface);
-      padding: 6px 12px;
+      padding: 5px 12px;
       border-radius: 6px;
       border: 1px solid var(--border);
-      font-size: 11.5px;
+      font-size: 11px;
       color: var(--text-muted);
       overflow-x: auto;
+      flex-shrink: 0;
     }
-    .meta-item { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+    .meta-item { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
     .meta-val { color: var(--text); font-weight: 600; font-family: var(--font-mono); }
     .meta-sep { color: var(--text-subtle); }
 
@@ -140,8 +144,9 @@
     .controls-bar {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
       flex-wrap: wrap;
+      flex-shrink: 0;
     }
 
     .control-section {
@@ -151,7 +156,7 @@
     }
 
     .control-label {
-      font-size: 10.5px;
+      font-size: 10px;
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.5px;
@@ -171,8 +176,8 @@
       background: transparent;
       border: none;
       color: var(--text-muted);
-      padding: 3px 9px;
-      font-size: 11.5px;
+      padding: 3px 8px;
+      font-size: 11px;
       font-weight: 500;
       cursor: pointer;
       border-radius: 9999px;
@@ -197,9 +202,9 @@
       background: var(--surface);
       border: 1px solid var(--border);
       color: var(--text-muted);
-      padding: 2px 7px;
+      padding: 2px 6px;
       border-radius: 9999px;
-      font-size: 10.5px;
+      font-size: 10px;
       font-weight: 500;
       cursor: pointer;
       display: inline-flex;
@@ -222,12 +227,13 @@
     /* Scrubber Track */
     .scrubber-container {
       position: relative;
-      height: 22px;
+      height: 20px;
       background: var(--surface);
       border-radius: 6px;
       border: 1px solid var(--border);
       cursor: pointer;
       overflow: hidden;
+      flex-shrink: 0;
     }
     .scrubber-canvas {
       position: absolute;
@@ -248,17 +254,20 @@
     }
     .scrubber-viewport:active { cursor: grabbing; }
 
-    /* Main Unified Canvas Layout */
+    /* Main Responsive Work Area (Takes 100% Remaining Vertical Space) */
     .workarea-layout {
+      flex: 1;
       display: flex;
       gap: 12px;
       position: relative;
-      align-items: flex-start;
+      min-height: 0; /* Enables flex item to shrink/grow properly */
+      align-items: stretch;
     }
 
     .canvas-column {
       flex: 1;
       min-width: 0;
+      height: 100%;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -270,7 +279,7 @@
     #raster-canvas {
       display: block;
       width: 100%;
-      height: 560px; /* Locked explicit CSS height prevents aspect-ratio stretching */
+      height: 100%;
       cursor: crosshair;
       background: #080c13;
     }
@@ -278,6 +287,7 @@
     /* Side Inspector Drawer */
     .inspector-drawer {
       width: 320px;
+      height: 100%;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -287,6 +297,7 @@
       gap: 10px;
       font-size: 11.5px;
       flex-shrink: 0;
+      overflow-y: auto;
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
     }
     .inspector-drawer.open { display: flex; }
@@ -367,9 +378,10 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      font-size: 11px;
+      font-size: 10.5px;
       color: var(--text-subtle);
       padding: 0 4px;
+      flex-shrink: 0;
     }
   </style>
 </head>
@@ -527,6 +539,7 @@
       events: [],
       streams: null,
       spikes: { t: [], c: [], r: [], ev: [], m: [] },
+      pokes: [],
       T_total: 100.0,
       t_start: 0.0,
       t_end: 30.0,
@@ -604,13 +617,14 @@
     async function loadRun(runId) {
       if (!runId) return;
       try {
-        const [manRes, evRes, strRes, spkRes] = await Promise.all([
+        const [manRes, evRes, strRes, spkRes, pokesRes] = await Promise.all([
           fetch(`/api/run/${runId}/manifest`).then(r => r.json()),
           fetch(`/api/run/${runId}/events`).then(r => r.json()),
           fetch(`/api/run/${runId}/streams`).then(r => r.json()),
-          fetch(`/api/run/${runId}/spikes`).then(r => r.json())
+          fetch(`/api/run/${runId}/spikes`).then(r => r.json()),
+          fetch(`/api/run/${runId}/pokes`).then(r => r.ok ? r.json() : []).catch(() => [])
         ]);
-        applyLoadedData(manRes, evRes, strRes, spkRes);
+        applyLoadedData(manRes, evRes, strRes, spkRes, pokesRes);
       } catch (err) {
         console.error("Error loading run:", err);
       }
@@ -642,11 +656,12 @@
       requestRender();
     }
 
-    function applyLoadedData(manifest, events, streams, spikes) {
+    function applyLoadedData(manifest, events, streams, spikes, pokes) {
       state.manifest = manifest;
       state.events = events;
       state.streams = streams;
       state.spikes = spikes;
+      state.pokes = pokes || [];
       state.T_total = manifest.duration || 100.0;
       state.t_start = 0.0;
       state.t_end = Math.min(30.0, state.T_total);
@@ -749,6 +764,7 @@
         const events = fileMap["events.json"] ? await readJson(fileMap["events.json"]) : [];
         const streams = fileMap["streams.json"] ? await readJson(fileMap["streams.json"]) : null;
         const spikes = fileMap["spikes.json"] ? await readJson(fileMap["spikes.json"]) : { t: [], c: [], r: [], ev: [], m: [] };
+        const pokes = fileMap["pokes.json"] ? await readJson(fileMap["pokes.json"]) : [];
 
         const select = document.getElementById("run-select");
         const opt = document.createElement("option");
@@ -757,7 +773,7 @@
         select.appendChild(opt);
         select.value = "local_imported";
 
-        applyLoadedData(manifest, events, streams, spikes);
+        applyLoadedData(manifest, events, streams, spikes, pokes);
       } catch (err) {
         alert("Failed to parse run bundle: " + err);
       }
@@ -812,7 +828,7 @@
       scrubberViewport.style.width = `${widthPx}px`;
     }
 
-    // High Performance Unified 60-FPS Viewport Rendering
+    // High Performance Dynamic-Size 60-FPS Viewport Rendering
     let renderRequested = false;
     function requestRender() {
       if (!renderRequested) {
@@ -825,13 +841,13 @@
       renderRequested = false;
       const dpr = window.devicePixelRatio || 1;
       const w = canvasColumn.clientWidth;
-      const h = 560; // Explicit fixed canvas height
+      const h = canvasColumn.clientHeight; // Responsive: Fills 100% of available viewport height!
+
+      if (w <= 0 || h <= 0) return;
 
       if (rasterCanvas.width !== Math.round(w * dpr) || rasterCanvas.height !== Math.round(h * dpr)) {
         rasterCanvas.width = Math.round(w * dpr);
         rasterCanvas.height = Math.round(h * dpr);
-        rasterCanvas.style.width = w + "px";
-        rasterCanvas.style.height = h + "px";
       }
 
       const ctx = rasterCanvas.getContext("2d");
@@ -839,7 +855,7 @@
       ctx.scale(dpr, dpr);
       ctx.clearRect(0, 0, w, h);
 
-      const padL = 72, padR = 24; // Generous left gutter for clean anatomical tags & motif labels
+      const padL = 72, padR = 24;
       const plotW = w - padL - padR;
 
       const t0 = state.t_start;
@@ -847,18 +863,18 @@
       const tSpan = t1 - t0;
       if (tSpan <= 0) return;
 
-      // Vertical Layout Heights
-      const padT_streams = 8,  h_streams = 42;
-      const padT_motif   = 56;
+      // Vertical Layout Calculations (Expands dynamically to screen height)
+      const padT_streams = 8,  h_streams = 38;
+      const padT_motif   = 52;
       
       const activeMotifRows = Array.from(state.activeMotifs).sort((a, b) => a - b);
-      const rowH = activeMotifRows.length > 0 ? Math.min(18, Math.max(6.0, 95 / activeMotifRows.length)) : 10;
-      const h_motif = Math.max(60, activeMotifRows.length * rowH);
+      const rowH = activeMotifRows.length > 0 ? Math.min(18, Math.max(5.5, 95 / activeMotifRows.length)) : 10;
+      const h_motif = Math.max(55, activeMotifRows.length * rowH);
 
       const padT_spike   = padT_motif + h_motif + 16;
-      const padT_beh     = h - 42, h_beh = 18;
+      const padT_beh     = h - 46, h_beh = 22; // Dedicated Pokes Track
       const padT_axis    = h - 22, h_axis = 18;
-      const h_spike      = padT_beh - padT_spike - 8;
+      const h_spike      = Math.max(120, padT_beh - padT_spike - 10); // Takes ALL remaining space!
 
       // -------------------------------------------------------------
       // 1. CONTINUOUS DATA STREAMS (OU Arousal x_MOp & x_CP)
@@ -870,7 +886,7 @@
       ctx.fillStyle = "#6e7681";
       ctx.font = "bold 9px ui-monospace, monospace";
       ctx.textAlign = "right";
-      ctx.fillText("OU STREAMS", padL - 8, padT_streams + 24);
+      ctx.fillText("OU STREAMS", padL - 8, padT_streams + 22);
       ctx.textAlign = "left";
 
       const zeroY = padT_streams + h_streams * 0.5;
@@ -895,6 +911,7 @@
       // Plot continuous streams
       if (state.streams && state.streams.streams && state.streams.time) {
         const timeArr = state.streams.time;
+        const strStride = timeArr.length > 50000 ? Math.ceil(timeArr.length / 50000) : 1;
         state.streams.streams.forEach(s => {
           const data = s.data;
           if (!data || data.length === 0) return;
@@ -903,7 +920,7 @@
           ctx.beginPath();
           let started = false;
 
-          for (let i = 0; i < timeArr.length; i++) {
+          for (let i = 0; i < timeArr.length; i += strStride) {
             const t = timeArr[i];
             if (t < t0 - 0.5) continue;
             if (t > t1 + 0.5) break;
@@ -936,10 +953,12 @@
       ctx.fillStyle = "rgba(255, 255, 255, 0.015)";
       ctx.fillRect(padL, padT_motif, plotW, h_motif);
 
-      // Section header badge inside track top-left
-      ctx.fillStyle = "rgba(255, 255, 255, 0.35)";
+      // Section header badge inside track top-left with subtle backdrop
+      ctx.fillStyle = "rgba(15, 21, 35, 0.75)";
+      ctx.fillRect(padL + 6, padT_motif + 1, 260, 13);
+      ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
       ctx.font = "bold 8.5px -apple-system, system-ui";
-      ctx.fillText("LEVEL 1 · SEQUENCE MOTIF SPIKES (E₁ AMPLITUDE ∝ √cₑ)", padL + 8, padT_motif + 10);
+      ctx.fillText("LEVEL 1 · SEQUENCE MOTIF SPIKES (E₁ AMPLITUDE ∝ √cₑ)", padL + 10, padT_motif + 10);
 
       const rowYMap = {};
       activeMotifRows.forEach((mid, idx) => {
@@ -955,7 +974,7 @@
         ctx.lineTo(w - padR, baseY);
         ctx.stroke();
 
-        // Right-aligned motif label in left gutter (clean column alignment)
+        // Right-aligned motif label in left gutter
         const color = MOTIF_PALETTE[mid] || "#8b949e";
         ctx.fillStyle = color;
         ctx.font = `bold ${Math.max(7.5, Math.min(9.5, rowH * 0.72))}px ui-monospace, monospace`;
@@ -964,7 +983,7 @@
       });
       ctx.textAlign = "left";
 
-      // Render Sequence Occurrences as crisp vertical spike ticks
+      // Render Sequence Occurrences
       state.renderedOccurrences = [];
       state.hoveredEvent = null;
 
@@ -974,7 +993,11 @@
         const motifSpikeW = isCloseZoom ? 2.5 : (isMediumZoom ? 1.8 : 1.2);
         const sel = state.selectedEvent;
 
-        for (let i = 0; i < state.events.length; i++) {
+        // Adaptive stride on occurrences when deeply zoomed out
+        const evCount = state.events.length;
+        const evStride = (evCount > 4000 && tSpan > 200) ? Math.ceil(evCount / 4000) : 1;
+
+        for (let i = 0; i < evCount; i += evStride) {
           const ev = state.events[i];
           if (!state.activeMotifs.has(ev.motif)) continue;
           if (ev.time < t0 - 1.0 || ev.time > t1 + 1.0) continue;
@@ -987,13 +1010,11 @@
           const isSelected = sel && sel.id === ev.id;
           const color = MOTIF_PALETTE[ev.motif] || "#58a6ff";
 
-          // Motor vigor sqrt scaling
           const normAmp = Math.min(1.0, Math.max(0.12, Math.sqrt(ev.amp || 1.0) / 1.5));
           const maxSpkH = Math.max(3.5, rowH - 2.5);
           const spikeH = Math.max(2.5, normAmp * maxSpkH);
           const topY = baseY - spikeH;
 
-          // Record rendered hit box for click detection
           state.renderedOccurrences.push({
             event: ev,
             x: ex,
@@ -1005,7 +1026,6 @@
           });
 
           if (isSelected) {
-            // Selected occurrence: glowing white needle + vertical guide needle through raster
             ctx.save();
             ctx.shadowColor = color;
             ctx.shadowBlur = 8;
@@ -1013,7 +1033,6 @@
             ctx.fillRect(ex - 1.5, topY - 2, 3.0, spikeH + 2);
             ctx.restore();
 
-            // Dashed needle drop line shooting down into raster
             ctx.save();
             ctx.strokeStyle = color;
             ctx.lineWidth = 1.5;
@@ -1024,12 +1043,10 @@
             ctx.stroke();
             ctx.restore();
           } else {
-            // Standard occurrence spike tick
             ctx.fillStyle = color;
             ctx.fillRect(ex - motifSpikeW / 2, topY, motifSpikeW, spikeH);
           }
 
-          // Check mouse hover
           if (Math.abs(state.mouseX - ex) < 6 && state.mouseY >= ry && state.mouseY <= baseY + 3) {
             state.hoveredEvent = ev;
           }
@@ -1052,19 +1069,20 @@
       const N_units = state.manifest?.n_units || 411;
       const divRank = state.manifest?.divider_rank || 208;
       const neuralDivRank = state.manifest?.neural_divider_rank || N_units;
+      const N_neural = neuralDivRank; // Only neural units are mapped to h_spike!
 
       // Anatomical gutter labels (MOp and CP)
-      const mopMidY = padT_spike + (divRank / N_units) * h_spike * 0.5;
+      const mopMidY = padT_spike + (divRank / N_neural) * h_spike * 0.5;
       ctx.textAlign = "right";
       ctx.fillStyle = "#58a6ff";
       ctx.font = "bold 11px -apple-system, system-ui";
       ctx.fillText("MOp", padL - 8, mopMidY - 3);
       ctx.fillStyle = "#8b949e";
       ctx.font = "8.5px ui-monospace, monospace";
-      ctx.fillText("208 u", padL - 8, mopMidY + 9);
+      ctx.fillText(`${divRank} u`, padL - 8, mopMidY + 9);
 
       // Region dividing dashed line (between MOp and CP)
-      const sepY = padT_spike + (divRank / N_units) * h_spike;
+      const sepY = padT_spike + (divRank / N_neural) * h_spike;
       if (state.regionFilter === "all") {
         ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
         ctx.setLineDash([4, 4]);
@@ -1076,27 +1094,31 @@
       }
 
       // CP gutter label
-      const cpMidY = sepY + ((neuralDivRank - divRank) / N_units) * h_spike * 0.5;
+      const cpMidY = sepY + ((N_neural - divRank) / N_neural) * h_spike * 0.5;
       ctx.fillStyle = "#ff9b54";
       ctx.font = "bold 11px -apple-system, system-ui";
       ctx.fillText("CP", padL - 8, cpMidY - 3);
       ctx.fillStyle = "#8b949e";
       ctx.font = "8.5px ui-monospace, monospace";
-      ctx.fillText("203 u", padL - 8, cpMidY + 9);
+      ctx.fillText(`${N_neural - divRank} u`, padL - 8, cpMidY + 9);
       ctx.textAlign = "left";
 
-      // Inside track section badges
-      ctx.fillStyle = "rgba(88, 166, 255, 0.85)";
+      // Inside track section badges with subtle backdrop
+      ctx.fillStyle = "rgba(15, 21, 35, 0.75)";
+      ctx.fillRect(padL + 6, padT_spike + 3, 235, 14);
+      ctx.fillStyle = "rgba(88, 166, 255, 0.95)";
       ctx.font = "bold 9px -apple-system, system-ui";
-      ctx.fillText("Motor Cortex (MOp) · 208 Units Sorted by Depth", padL + 8, padT_spike + 13);
+      ctx.fillText(`Motor Cortex (MOp) · ${divRank} Units Sorted by Depth`, padL + 10, padT_spike + 13);
 
-      ctx.fillStyle = "rgba(255, 155, 84, 0.85)";
-      ctx.fillText("Dorsal Striatum (CP) · 203 Units Sorted by Depth", padL + 8, sepY + 13);
+      ctx.fillStyle = "rgba(15, 21, 35, 0.75)";
+      ctx.fillRect(padL + 6, sepY + 3, 235, 14);
+      ctx.fillStyle = "rgba(255, 155, 84, 0.95)";
+      ctx.fillText(`Dorsal Striatum (CP) · ${N_neural - divRank} Units Sorted by Depth`, padL + 10, sepY + 13);
 
       const sel = state.selectedEvent;
       const hlMode = state.highlightMode;
 
-      // Shaded temporal footprint window behind spikes if an event is selected
+      // Shaded occurrence footprint window
       if (sel) {
         const warp = sel.warp || 1.0;
         const winT0 = sel.time - 0.50 * warp;
@@ -1112,7 +1134,7 @@
         ctx.globalAlpha = 1.0;
       }
 
-      // Draw Neural Spikes
+      // Draw Neural Spikes with Adaptive Stride (60 FPS Performance Guarantee)
       if (state.spikes && state.spikes.t && state.spikes.t.length > 0) {
         const ts = state.spikes.t;
         const ranks = state.spikes.r;
@@ -1121,34 +1143,38 @@
 
         const idx0 = searchSorted(ts, t0 - 0.1);
         const idx1 = searchSorted(ts, t1 + 0.1);
+        const countInView = Math.max(0, idx1 - idx0);
+
+        // Adaptive stride prevents drawing millions of points when zoomed out
+        const maxDrawPoints = 65000;
+        const stride = countInView > maxDrawPoints ? Math.ceil(countInView / maxDrawPoints) : 1;
 
         const isCloseZoom = tSpan < 2.5;
         const isMediumZoom = tSpan < 15.0;
         const spikeW = isCloseZoom ? 2.5 : (isMediumZoom ? 1.8 : 1.2);
         const spikeH = isCloseZoom ? 4.8 : (isMediumZoom ? 3.4 : 2.2);
 
-        // First pass: Background spikes
-        for (let i = idx0; i < idx1; i++) {
+        // Pass 1: Background neural spikes (strided for 60 FPS)
+        for (let i = idx0; i < idx1; i += stride) {
+          const rank = ranks[i];
+          if (rank >= N_neural) continue; // Behavioral channels are routed to POKES track!
+
           const t = ts[i];
           if (t < t0 || t > t1) continue;
 
-          const rank = ranks[i];
           const isMop = rank < divRank;
-          const isCp  = rank >= divRank && rank < neuralDivRank;
-          const isBeh = rank >= neuralDivRank;
+          const isCp  = rank >= divRank && rank < N_neural;
 
           if (state.regionFilter === "MOp" && !isMop) continue;
           if (state.regionFilter === "CP" && !isCp) continue;
-          if (state.regionFilter === "Behavior" && !isBeh) continue;
 
           const x = padL + ((t - t0) / tSpan) * plotW;
-          const y = padT_spike + (rank / N_units) * h_spike;
+          const y = padT_spike + (rank / N_neural) * h_spike;
 
           const evId = evs[i];
           const mId  = ms[i];
 
           if (hlMode === "selected" && sel) {
-            // In selected mode, only draw non-attributed spikes in this pass
             if (evId !== sel.id) {
               ctx.globalAlpha = 0.08;
               ctx.fillStyle = isMop ? "#58a6ff" : "#ff9b54";
@@ -1175,36 +1201,35 @@
               ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
             }
           } else {
-            // Anatomical mode
             ctx.globalAlpha = isCloseZoom ? 0.95 : 0.85;
-            ctx.fillStyle = isBeh ? "var(--beh)" : (isMop ? "#58a6ff" : "#ff9b54");
+            ctx.fillStyle = isMop ? "#58a6ff" : "#ff9b54";
             ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
           }
         }
 
-        // Second pass: Highlighted Foreground Attributed Spikes (rendered on top!)
+        // Pass 2: Attributed Spikes (Always 100% drawn without stride!)
         if (hlMode === "selected" && sel) {
           const aSpikeW = Math.max(2.8, spikeW + 1.2);
           const aSpikeH = Math.max(4.5, spikeH + 1.8);
           const mColor = MOTIF_PALETTE[sel.motif] || "#58a6ff";
 
           for (let i = idx0; i < idx1; i++) {
-            const evId = evs[i];
-            if (evId === sel.id) {
-              const t = ts[i];
+            if (evs[i] === sel.id) {
               const rank = ranks[i];
+              if (rank >= N_neural) continue;
+
               const isMop = rank < divRank;
               if (state.regionFilter === "MOp" && !isMop) continue;
               if (state.regionFilter === "CP" && isMop) continue;
 
+              const t = ts[i];
               const ax = padL + ((t - t0) / tSpan) * plotW;
-              const ay = padT_spike + (rank / N_units) * h_spike;
+              const ay = padT_spike + (rank / N_neural) * h_spike;
 
               ctx.globalAlpha = 1.0;
               ctx.fillStyle = mColor;
               ctx.fillRect(ax - aSpikeW / 2, ay - aSpikeH / 2, aSpikeW, aSpikeH);
 
-              // Glowing needle core on close zoom
               if (isCloseZoom) {
                 ctx.fillStyle = "#ffffff";
                 ctx.fillRect(ax - 0.5, ay - aSpikeH / 2, 1.0, aSpikeH);
@@ -1217,7 +1242,7 @@
       ctx.globalAlpha = 1.0;
 
       // -------------------------------------------------------------
-      // 4. BEHAVIORAL POKES & REWARD (If Available)
+      // 4. BEHAVIORAL POKES & REWARD TRACK (Dedicated Visible Channel)
       // -------------------------------------------------------------
       ctx.fillStyle = "rgba(255, 255, 255, 0.015)";
       ctx.fillRect(padL, padT_beh, plotW, h_beh);
@@ -1225,8 +1250,61 @@
       ctx.textAlign = "right";
       ctx.fillStyle = "#3fb950";
       ctx.font = "bold 9px ui-monospace, monospace";
-      ctx.fillText("POKES", padL - 8, padT_beh + 12);
+      ctx.fillText("POKES", padL - 8, padT_beh + 14);
       ctx.textAlign = "left";
+
+      // 1. Draw from state.pokes (Port entries)
+      if (state.pokes && state.pokes.length > 0) {
+        ctx.fillStyle = "#3fb950";
+        const isClose = tSpan < 5.0;
+        const pLen = state.pokes.length;
+        const pStride = (pLen > 4000 && tSpan > 200) ? Math.ceil(pLen / 4000) : 1;
+
+        for (let i = 0; i < pLen; i += pStride) {
+          const p = state.pokes[i];
+          if (p.time < t0 || p.time > t1) continue;
+          const px = padL + ((p.time - t0) / tSpan) * plotW;
+          
+          ctx.beginPath();
+          ctx.arc(px, padT_beh + h_beh * 0.5, 3.2, 0, Math.PI * 2);
+          ctx.fill();
+
+          if (isClose) {
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 8px monospace";
+            ctx.fillText(`P${p.port}`, px - 4, padT_beh + 9);
+            ctx.fillStyle = "#3fb950";
+          }
+        }
+      }
+
+      // 2. Also draw from behavioral pseudo-spikes if present (channels 411-425)
+      if (state.spikes && state.spikes.t && neuralDivRank < N_units) {
+        const ts = state.spikes.t;
+        const ranks = state.spikes.r;
+        const idx0 = searchSorted(ts, t0 - 0.1);
+        const idx1 = searchSorted(ts, t1 + 0.1);
+        const bCount = idx1 - idx0;
+        const bStride = (bCount > 3000 && tSpan > 200) ? Math.ceil(bCount / 3000) : 1;
+
+        for (let i = idx0; i < idx1; i += bStride) {
+          const rank = ranks[i];
+          if (rank >= neuralDivRank) {
+            const t = ts[i];
+            const px = padL + ((t - t0) / tSpan) * plotW;
+            const portIdx = rank - neuralDivRank;
+            const isReward = portIdx === 14;
+
+            if (isReward) {
+              ctx.fillStyle = "#f1e05a";
+              ctx.fillRect(px - 1.5, padT_beh + 2, 3, h_beh - 4);
+            } else {
+              ctx.fillStyle = "#3fb950";
+              ctx.fillRect(px - 1, padT_beh + 3, 2, h_beh - 6);
+            }
+          }
+        }
+      }
 
       // -------------------------------------------------------------
       // 5. TIME AXIS RULER
