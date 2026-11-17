@@ -6,19 +6,20 @@
   <title>PurePacketPPSeq · Model Explorer</title>
   <style>
     :root {
-      --bg: #090d16;
-      --surface: #111827;
-      --surface-alt: #1a2333;
-      --surface-hover: #232e42;
-      --border: rgba(255, 255, 255, 0.09);
+      --bg: #080c13;
+      --surface: #101622;
+      --surface-alt: #172030;
+      --surface-hover: #1f2b40;
+      --border: rgba(255, 255, 255, 0.08);
       --border-focus: rgba(56, 139, 253, 0.6);
-      --text: #f3f4f6;
-      --text-muted: #9ca3af;
-      --text-subtle: #6b7280;
+      --text: #f0f6fc;
+      --text-muted: #8b949e;
+      --text-subtle: #6e7681;
       --primary: #388bfd;
       --accent: #f0883e;
       --mop: #388bfd;
       --cp: #f0883e;
+      --beh: #10b981;
       --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     }
 
@@ -27,8 +28,8 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", Helvetica, Arial, sans-serif;
       background: var(--bg);
       color: var(--text);
-      line-height: 1.4;
-      padding: 12px 18px 24px 18px;
+      line-height: 1.45;
+      padding: 14px 20px 28px 20px;
       user-select: none;
       -webkit-font-smoothing: antialiased;
       overflow-x: hidden;
@@ -57,14 +58,14 @@
       color: #fff;
       font-weight: 700;
       font-size: 11px;
-      padding: 3px 8px;
+      padding: 3px 9px;
       border-radius: 6px;
       letter-spacing: 0.5px;
       text-transform: uppercase;
     }
 
     .brand-title {
-      font-size: 17px;
+      font-size: 18px;
       font-weight: 600;
       letter-spacing: -0.2px;
     }
@@ -89,7 +90,7 @@
       font-weight: 500;
       cursor: pointer;
       outline: none;
-      min-width: 260px;
+      min-width: 320px;
     }
     .run-select:focus { border-color: var(--primary); }
 
@@ -134,44 +135,52 @@
     .controls-bar {
       display: flex;
       align-items: center;
-      gap: 12px;
-      margin-bottom: 10px;
+      gap: 14px;
+      margin-bottom: 12px;
       flex-wrap: wrap;
     }
 
-    .btn-group {
-      display: inline-flex;
-      background: var(--surface);
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      overflow: hidden;
-    }
-    .btn-seg {
-      background: transparent;
-      border: none;
-      color: var(--text-muted);
-      padding: 5px 11px;
-      font-size: 12px;
-      font-weight: 500;
-      cursor: pointer;
-      border-right: 1px solid var(--border);
-      transition: background 0.12s;
-    }
-    .btn-seg:last-child { border-right: none; }
-    .btn-seg:hover { background: var(--surface-hover); color: var(--text); }
-    .btn-seg.active {
-      background: var(--surface-alt);
-      color: var(--primary);
-      font-weight: 600;
+    .control-section {
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
 
-    .filter-label {
+    .control-label {
       font-size: 11px;
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.5px;
       color: var(--text-subtle);
       margin-right: 2px;
+    }
+
+    .btn-group {
+      display: inline-flex;
+      background: var(--surface);
+      border-radius: 9999px;
+      border: 1px solid var(--border);
+      padding: 2px;
+      gap: 2px;
+    }
+    .btn-seg {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border-radius: 9999px;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+    .btn-seg:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+    .btn-seg.active {
+      background: var(--surface-alt);
+      color: #fff;
+      font-weight: 600;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
     }
 
     .motif-chips {
@@ -184,8 +193,8 @@
       background: var(--surface);
       border: 1px solid var(--border);
       color: var(--text-muted);
-      padding: 3px 8px;
-      border-radius: 12px;
+      padding: 3px 9px;
+      border-radius: 9999px;
       font-size: 11px;
       font-weight: 500;
       cursor: pointer;
@@ -197,8 +206,8 @@
     .motif-chip:hover { border-color: rgba(255, 255, 255, 0.3); color: var(--text); }
     .motif-chip.active {
       background: var(--surface-alt);
-      color: var(--text);
-      border-color: rgba(255, 255, 255, 0.25);
+      color: #fff;
+      border-color: rgba(255, 255, 255, 0.3);
     }
     .chip-dot {
       width: 7px;
@@ -209,11 +218,11 @@
     /* Scrubber Track */
     .scrubber-container {
       position: relative;
-      height: 38px;
+      height: 26px;
       background: var(--surface);
-      border-radius: 8px;
+      border-radius: 6px;
       border: 1px solid var(--border);
-      margin-bottom: 10px;
+      margin-bottom: 12px;
       cursor: pointer;
       overflow: hidden;
     }
@@ -228,7 +237,7 @@
       position: absolute;
       top: 0;
       height: 100%;
-      background: rgba(56, 139, 253, 0.18);
+      background: rgba(56, 139, 253, 0.22);
       border-left: 2px solid var(--primary);
       border-right: 2px solid var(--primary);
       box-sizing: border-box;
@@ -236,7 +245,7 @@
     }
     .scrubber-viewport:active { cursor: grabbing; }
 
-    /* Work Area with Side Drawer */
+    /* Main Multi-Track Work Area */
     .workarea-layout {
       display: flex;
       gap: 14px;
@@ -257,6 +266,7 @@
       border-radius: 8px;
       position: relative;
       overflow: hidden;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
     }
 
     .panel-header {
@@ -282,13 +292,13 @@
     .axis-canvas-container {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: 6px;
       padding: 2px 0;
     }
 
     /* Side Inspector Drawer */
     .inspector-drawer {
-      width: 310px;
+      width: 320px;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -298,6 +308,7 @@
       gap: 12px;
       font-size: 12px;
       flex-shrink: 0;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
     }
     .inspector-drawer.open { display: flex; }
 
@@ -320,7 +331,7 @@
       border: none;
       color: var(--text-muted);
       cursor: pointer;
-      font-size: 14px;
+      font-size: 15px;
     }
     .btn-close:hover { color: var(--text); }
 
@@ -351,13 +362,14 @@
       font-size: 12px;
       cursor: pointer;
       margin-top: 4px;
+      transition: background 0.15s ease;
     }
-    .btn-drawer-zoom:hover { opacity: 0.9; }
+    .btn-drawer-zoom:hover { background: #2563eb; }
 
     /* Tooltip */
     .tooltip {
       position: absolute;
-      background: rgba(17, 24, 39, 0.95);
+      background: rgba(16, 22, 34, 0.96);
       border: 1px solid var(--border-focus);
       border-radius: 6px;
       padding: 8px 12px;
@@ -365,7 +377,7 @@
       color: var(--text);
       pointer-events: none;
       z-index: 100;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
       display: none;
     }
     .tooltip-title { font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
@@ -393,7 +405,7 @@
 
     <!-- Run Switcher & Local Loader -->
     <div class="run-nav-group">
-      <label for="run-select" class="filter-label">Run:</label>
+      <label for="run-select" class="control-label">Run:</label>
       <select id="run-select" class="run-select">
         <option value="">Loading available runs...</option>
       </select>
@@ -414,6 +426,8 @@
     <span class="meta-sep">·</span>
     <div class="meta-item"><span>Total Spikes:</span> <span class="meta-val" id="meta-spikes">--</span></div>
     <span class="meta-sep">·</span>
+    <div class="meta-item"><span>Foreground Spikes:</span> <span class="meta-val" id="meta-fg-spikes">--</span></div>
+    <span class="meta-sep">·</span>
     <div class="meta-item"><span>Inferred Motifs:</span> <span class="meta-val" id="meta-motifs">--</span></div>
     <span class="meta-sep">·</span>
     <div class="meta-item"><span>Total Occurrences:</span> <span class="meta-val" id="meta-events">--</span></div>
@@ -421,21 +435,40 @@
 
   <!-- Controls & Filters Toolbar -->
   <div class="controls-bar">
-    <div class="btn-group" id="window-presets">
-      <button class="btn-seg" data-win="1.0">1s</button>
-      <button class="btn-seg" data-win="5.0">5s</button>
-      <button class="btn-seg active" data-win="30.0">30s</button>
-      <button class="btn-seg" data-win="60.0">60s</button>
-      <button class="btn-seg" data-win="full">Full</button>
+    <!-- Window Presets -->
+    <div class="control-section">
+      <span class="control-label">Window:</span>
+      <div class="btn-group" id="window-presets">
+        <button class="btn-seg" data-win="1.0">1s</button>
+        <button class="btn-seg" data-win="5.0">5s</button>
+        <button class="btn-seg active" data-win="30.0">30s</button>
+        <button class="btn-seg" data-win="60.0">60s</button>
+        <button class="btn-seg" data-win="full">Full</button>
+      </div>
     </div>
 
-    <div class="btn-group" id="region-filters">
-      <button class="btn-seg active" data-reg="all">All Regions</button>
-      <button class="btn-seg" data-reg="MOp" style="color:var(--mop);">MOp</button>
-      <button class="btn-seg" data-reg="CP" style="color:var(--cp);">CP</button>
+    <!-- Highlight Mode -->
+    <div class="control-section">
+      <span class="control-label">Spikes:</span>
+      <div class="btn-group" id="highlight-modes">
+        <button class="btn-seg active" data-hl="anatomical" title="Standard anatomical colors (MOp blue, CP orange)">Anatomical</button>
+        <button class="btn-seg" data-hl="selected" title="Illuminate attributed spikes of selected event, dim background">Active Event</button>
+        <button class="btn-seg" data-hl="motif" title="Highlight all sequence spikes for active motif">By Motif</button>
+        <button class="btn-seg" data-hl="all_motifs" title="Highlight ALL foreground motif spikes, dim Poisson background">All Motifs (Foreground)</button>
+      </div>
     </div>
 
-    <button class="btn-action" id="btn-reset-view" title="Reset viewport">⟲ Reset</button>
+    <!-- Region Filter -->
+    <div class="control-section">
+      <span class="control-label">Region:</span>
+      <div class="btn-group" id="region-filters">
+        <button class="btn-seg active" data-reg="all">All</button>
+        <button class="btn-seg" data-reg="MOp" style="color:var(--mop);">MOp</button>
+        <button class="btn-seg" data-reg="CP" style="color:var(--cp);">CP</button>
+      </div>
+    </div>
+
+    <button class="btn-action" id="btn-reset-view" title="Reset view and deselect">⟲ Reset</button>
 
     <div style="flex:1;"></div>
 
@@ -459,30 +492,30 @@
           <span>Continuous Data Streams (Level m=5 OU Arousal & Drift)</span>
           <div id="streams-legend" style="display:flex; gap:12px;"></div>
         </div>
-        <canvas id="streams-canvas" class="display-canvas" height="90"></canvas>
+        <canvas id="streams-canvas" class="display-canvas" height="85"></canvas>
       </div>
 
-      <!-- Track 2: Motif Occurrences Timeline -->
+      <!-- Track 2: Sequence Occurrences (Scale n=1 Marked Events) -->
       <div class="canvas-panel" id="panel-events">
         <div class="panel-header">
-          <span>Motif Occurrences (Level m=2 · Height ∝ Motor Vigor $c_e$)</span>
+          <span>Sequence Occurrences (Scale n=1 · Height ∝ Motor Vigor $\sqrt{c_e}$)</span>
           <span id="events-count-badge">0 visible</span>
         </div>
-        <canvas id="events-canvas" class="display-canvas" height="80"></canvas>
+        <canvas id="events-canvas" class="display-canvas" height="95"></canvas>
       </div>
 
-      <!-- Track 3: Multi-Unit Spike Raster -->
+      <!-- Track 3: Multi-Unit Spike Raster (Contiguous Anatomical Sorting) -->
       <div class="canvas-panel" id="panel-raster">
         <div class="panel-header">
-          <span>Multi-Unit Spike Raster (Scale n=0 Spikes)</span>
+          <span>Multi-Unit Spike Raster (Scale n=0 Spikes · Depth-Ordered Contiguous Anatomy)</span>
           <span id="spikes-count-badge">0 visible</span>
         </div>
-        <canvas id="raster-canvas" class="display-canvas" height="340"></canvas>
+        <canvas id="raster-canvas" class="display-canvas" height="440"></canvas>
       </div>
 
       <!-- Synchronized Time Ruler -->
       <div class="axis-canvas-container">
-        <canvas id="axis-canvas" class="display-canvas" height="26"></canvas>
+        <canvas id="axis-canvas" class="display-canvas" height="24"></canvas>
       </div>
     </div>
 
@@ -527,7 +560,7 @@
   <!-- Bottom Status Bar -->
   <footer class="status-bar">
     <div id="status-viewport-text">Viewport: 0.00s – 30.00s (Span: 30.00s)</div>
-    <div>Scroll wheel to zoom · Click-drag to pan · Click event glyph to inspect</div>
+    <div>Click occurrence to isolate its spikes · Scroll wheel to zoom · Click-drag to pan</div>
   </footer>
 
   <script>
@@ -536,12 +569,14 @@
       manifest: null,
       events: [],
       streams: null,
-      spikes: { t: [], c: [] },
+      spikes: { t: [], c: [], r: [], ev: [], m: [] },
       T_total: 100.0,
       t_start: 0.0,
       t_end: 30.0,
       selectedEvent: null,
       activeMotifs: new Set(),
+      activeMotifId: 1,
+      highlightMode: "anatomical", // "anatomical" | "selected" | "motif" | "all_motifs"
       regionFilter: "all",
       isDraggingScrubber: false,
       isPanningCanvas: false,
@@ -622,9 +657,11 @@
       // Populate Motifs
       state.activeMotifs.clear();
       const chipContainer = document.getElementById("motif-chips-container");
-      chipContainer.innerHTML = '<span class="filter-label">Motifs:</span>';
+      chipContainer.innerHTML = '<span class="control-label">Motifs:</span>';
       
       const motifIds = Object.keys(manifest.motifs || {}).map(Number).sort((a,b)=>a-b);
+      if (motifIds.length > 0) state.activeMotifId = motifIds[0];
+
       motifIds.forEach(mId => {
         state.activeMotifs.add(mId);
         const mInfo = manifest.motifs[mId];
@@ -632,18 +669,46 @@
         chip.className = "motif-chip active";
         chip.dataset.mid = mId;
         chip.innerHTML = `<span class="chip-dot" style="background:${mInfo.color || '#388bfd'};"></span> M${mId}`;
-        chip.onclick = () => {
-          if (state.activeMotifs.has(mId)) {
-            state.activeMotifs.delete(mId);
-            chip.classList.remove("active");
+        
+        chip.onclick = (e) => {
+          if (e.shiftKey) {
+            // Shift-click: toggle visibility
+            if (state.activeMotifs.has(mId)) {
+              state.activeMotifs.delete(mId);
+              chip.classList.remove("active");
+            } else {
+              state.activeMotifs.add(mId);
+              chip.classList.add("active");
+            }
           } else {
-            state.activeMotifs.add(mId);
-            chip.classList.add("active");
+            // Normal click: set as active motif for highlight
+            state.activeMotifId = mId;
+            setHighlightMode("motif");
           }
           requestRender();
         };
         chipContainer.appendChild(chip);
       });
+
+      // Region filters setup: add Behavior button if behavior exists
+      const regFilters = document.getElementById("region-filters");
+      const existingBehBtn = regFilters.querySelector("[data-reg='Behavior']");
+      if (manifest.regions?.Behavior && !existingBehBtn) {
+        const behBtn = document.createElement("button");
+        behBtn.className = "btn-seg";
+        behBtn.dataset.reg = "Behavior";
+        behBtn.style.color = "var(--beh)";
+        behBtn.textContent = "Pokes";
+        behBtn.onclick = () => {
+          document.querySelectorAll("#region-filters .btn-seg").forEach(b => b.classList.remove("active"));
+          behBtn.classList.add("active");
+          state.regionFilter = "Behavior";
+          requestRender();
+        };
+        regFilters.appendChild(behBtn);
+      } else if (!manifest.regions?.Behavior && existingBehBtn) {
+        existingBehBtn.remove();
+      }
 
       // Streams Legend
       const legContainer = document.getElementById("streams-legend");
@@ -663,8 +728,9 @@
       // Update Banner
       document.getElementById("meta-session").textContent = manifest.session || manifest.run_id;
       document.getElementById("meta-duration").textContent = `${manifest.duration.toFixed(1)}s (${(manifest.duration/60).toFixed(1)}m)`;
-      document.getElementById("meta-units").textContent = manifest.n_units || manifest.regions?.MOp?.count + manifest.regions?.CP?.count || "--";
+      document.getElementById("meta-units").textContent = manifest.n_units || "--";
       document.getElementById("meta-spikes").textContent = (manifest.n_spikes || spikes.total_count || 0).toLocaleString();
+      document.getElementById("meta-fg-spikes").textContent = (manifest.n_fg_spikes || spikes.fg_count || 0).toLocaleString();
       document.getElementById("meta-motifs").textContent = manifest.n_motifs || motifIds.length;
       document.getElementById("meta-events").textContent = (manifest.n_events || events.length).toLocaleString();
 
@@ -673,7 +739,7 @@
       requestRender();
     }
 
-    // Local Folder Loader (Drag & Drop or Dialog)
+    // Local Folder Loader
     document.getElementById("btn-open-local").onclick = () => {
       document.getElementById("local-dir-input").click();
     };
@@ -701,9 +767,8 @@
         const manifest = await readJson(fileMap["manifest.json"]);
         const events = fileMap["events.json"] ? await readJson(fileMap["events.json"]) : [];
         const streams = fileMap["streams.json"] ? await readJson(fileMap["streams.json"]) : null;
-        const spikes = fileMap["spikes.json"] ? await readJson(fileMap["spikes.json"]) : { t: [], c: [] };
+        const spikes = fileMap["spikes.json"] ? await readJson(fileMap["spikes.json"]) : { t: [], c: [], r: [], ev: [], m: [] };
 
-        // Add custom entry to dropdown
         const select = document.getElementById("run-select");
         const opt = document.createElement("option");
         opt.value = "local_imported";
@@ -730,8 +795,7 @@
       const H = rect.height;
       ctx.clearRect(0, 0, W, H);
 
-      // Render occurrence density histogram across 200 bins
-      const nBins = 200;
+      const nBins = 240;
       const bins = new Float32Array(nBins);
       const T = state.T_total;
       if (T <= 0) return;
@@ -745,10 +809,10 @@
       for (let i = 0; i < nBins; i++) if (bins[i] > maxBin) maxBin = bins[i];
 
       const binW = W / nBins;
-      ctx.fillStyle = "rgba(56, 139, 253, 0.4)";
+      ctx.fillStyle = "rgba(56, 139, 253, 0.45)";
       for (let i = 0; i < nBins; i++) {
-        const h = (bins[i] / maxBin) * (H - 6);
-        ctx.fillRect(i * binW, H - h - 2, Math.max(1, binW - 0.5), h);
+        const h = (bins[i] / maxBin) * (H - 4);
+        ctx.fillRect(i * binW, H - h - 1, Math.max(1, binW - 0.5), h);
       }
 
       updateScrubberViewportBox();
@@ -785,7 +849,6 @@
       updateStatusDisplay();
     }
 
-    // Helper: resize canvas to sharp physical pixels
     function setupCanvasDpr(canvas) {
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
@@ -835,7 +898,6 @@
         ctx.beginPath();
         let started = false;
 
-        // Sample visible range
         for (let i = 0; i < timeArr.length; i++) {
           const t = timeArr[i];
           if (t < t0 - 0.5) continue;
@@ -843,7 +905,6 @@
 
           const x = ((t - t0) / dt) * width;
           const val = data[i];
-          // Scale: 0 is center, range +/- 1.5 a.u.
           const y = zeroY - (val / 1.5) * (height * 0.42);
 
           if (!started) {
@@ -856,11 +917,10 @@
         ctx.stroke();
       });
 
-      // Crosshair
       drawCrosshair(ctx, width, height);
     }
 
-    // Track 2: Occurrences
+    // Track 2: Occurrences (Scale n=1 Marked Sequence Events)
     function renderEventsTrack() {
       const { ctx, width, height } = setupCanvasDpr(eventsCanvas);
       ctx.clearRect(0, 0, width, height);
@@ -873,10 +933,10 @@
       let visibleCount = 0;
       state.hoveredEvent = null;
 
-      // Occurrences stem / pill glyphs
+      // Occurrences stem / capsule glyphs
       state.events.forEach(ev => {
         if (!state.activeMotifs.has(ev.motif)) return;
-        if (ev.time < t0 - 0.2 || ev.time > t1 + 0.2) return;
+        if (ev.time < t0 - 0.5 || ev.time > t1 + 0.5) return;
 
         visibleCount++;
         const x = ((ev.time - t0) / dt) * width;
@@ -884,27 +944,38 @@
         const color = mInfo.color || "#388bfd";
         const isSelected = state.selectedEvent && state.selectedEvent.id === ev.id;
 
-        // Amplitude height
-        const normAmp = Math.min(2.5, Math.max(0.2, ev.amp || 1.0));
-        const glyphH = normAmp * (height * 0.35);
-        const yTop = height - glyphH - 6;
+        // Vigor height sqrt scaling matching original explorer
+        const normAmp = Math.min(2.5, Math.max(0.15, Math.sqrt(ev.amp || 1.0)));
+        const glyphH = normAmp * (height * 0.55);
+        const yTop = height - glyphH - 8;
 
         // Stem
-        ctx.strokeStyle = color;
-        ctx.lineWidth = isSelected ? 3 : 1.5;
+        ctx.strokeStyle = isSelected ? "#ffffff" : color;
+        ctx.lineWidth = isSelected ? 3 : 1.8;
         ctx.beginPath();
-        ctx.moveTo(x, height - 3);
+        ctx.moveTo(x, height - 2);
         ctx.lineTo(x, yTop);
         ctx.stroke();
 
-        // Top bulb / pill
-        ctx.fillStyle = isSelected ? "#fff" : color;
-        ctx.beginPath();
-        ctx.arc(x, yTop, isSelected ? 4.5 : 3, 0, Math.PI * 2);
-        ctx.fill();
+        // Top bulb / needle
+        if (isSelected) {
+          ctx.save();
+          ctx.shadowColor = color;
+          ctx.shadowBlur = 10;
+          ctx.fillStyle = "#ffffff";
+          ctx.beginPath();
+          ctx.arc(x, yTop, 5.0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        } else {
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.arc(x, yTop, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
 
         // Check hover
-        if (Math.abs(state.mouseX - x) < 5) {
+        if (Math.abs(state.mouseX - x) < 6) {
           state.hoveredEvent = ev;
         }
       });
@@ -913,7 +984,7 @@
       drawCrosshair(ctx, width, height);
     }
 
-    // Track 3: Raster
+    // Track 3: Raster (Multi-Unit Spike Raster with Contiguous Anatomy and Highlighting)
     function renderRasterTrack() {
       const { ctx, width, height } = setupCanvasDpr(rasterCanvas);
       ctx.clearRect(0, 0, width, height);
@@ -924,26 +995,95 @@
       if (dt <= 0 || !state.spikes) return;
 
       const N_units = state.manifest?.n_units || 411;
-      const rowH = height / N_units;
+      const divRank = state.manifest?.divider_rank || Math.floor(N_units * 0.5);
+      const neuralDivRank = state.manifest?.neural_divider_rank || N_units;
 
-      const mopSet = new Set(state.manifest?.regions?.MOp?.channels || []);
-      const cpSet  = new Set(state.manifest?.regions?.CP?.channels || []);
-      const behSet = new Set(state.manifest?.regions?.Behavior?.channels || []);
+      const sel = state.selectedEvent;
+      const hlMode = state.highlightMode;
+
+      // Draw shaded occurrence footprint window behind spikes if an event is selected
+      if (sel) {
+        const warp = sel.warp || 1.0;
+        const winT0 = sel.time - 0.50 * warp;
+        const winT1 = sel.time + 0.50 * warp;
+        const bandX0 = ((winT0 - t0) / dt) * width;
+        const bandX1 = ((winT1 - t0) / dt) * width;
+        const bW = Math.max(2, bandX1 - bandX0);
+        const mInfo = state.manifest?.motifs?.[sel.motif] || {};
+        
+        ctx.fillStyle = mInfo.color || "#388bfd";
+        ctx.globalAlpha = 0.08;
+        ctx.fillRect(Math.max(0, bandX0), 0, Math.min(width, bW), height);
+
+        // Dashed drop guideline
+        const selX = ((sel.time - t0) / dt) * width;
+        ctx.strokeStyle = mInfo.color || "#388bfd";
+        ctx.globalAlpha = 0.5;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(selX, 0);
+        ctx.lineTo(selX, height);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1.0;
+      }
+
+      // Draw Anatomical Divider Lines (MOp / CP contiguous boundary)
+      if (state.regionFilter === "all") {
+        const divY = (divRank / N_units) * height;
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(0, divY);
+        ctx.lineTo(width, divY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Region Anatomical Tags
+        ctx.fillStyle = "rgba(56, 139, 253, 0.75)";
+        ctx.font = "bold 10px sans-serif";
+        ctx.fillText("Motor Cortex (MOp, 208 units)", 8, 14);
+        ctx.fillStyle = "rgba(240, 136, 62, 0.75)";
+        ctx.fillText("Dorsal Striatum (CP, 203 units)", 8, divY + 14);
+
+        if (neuralDivRank < N_units) {
+          const behY = (neuralDivRank / N_units) * height;
+          ctx.strokeStyle = "rgba(16, 185, 129, 0.25)";
+          ctx.setLineDash([3, 3]);
+          ctx.beginPath();
+          ctx.moveTo(0, behY);
+          ctx.lineTo(width, behY);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = "rgba(16, 185, 129, 0.85)";
+          ctx.fillText("Task Pokes & Reward (15 channels)", 8, behY + 12);
+        }
+      }
 
       // Draw spikes
       const ts = state.spikes.t;
-      const cs = state.spikes.c;
+      const ranks = state.spikes.r;
+      const evs = state.spikes.ev;
+      const ms = state.spikes.m;
       const nSpk = ts.length;
+
+      const isCloseZoom = dt < 3.0;
+      const isMediumZoom = dt < 15.0;
+      const spikeW = isCloseZoom ? 2.5 : (isMediumZoom ? 1.8 : 1.2);
+      const spikeH = isCloseZoom ? 4.5 : (isMediumZoom ? 3.2 : 2.0);
+
       let visibleSpikes = 0;
 
+      // Determine pass logic:
+      // When highlighting an active event, draw dimmed background spikes first, then draw foreground spikes vividly on top!
       for (let i = 0; i < nSpk; i++) {
         const t = ts[i];
         if (t < t0 || t > t1) continue;
 
-        const c = cs[i];
-        const isMop = mopSet.has(c);
-        const isCp  = cpSet.has(c);
-        const isBeh = behSet.has(c);
+        const rank = ranks[i];
+        const isMop = rank < divRank;
+        const isCp  = rank >= divRank && rank < neuralDivRank;
+        const isBeh = rank >= neuralDivRank;
 
         if (state.regionFilter === "MOp" && !isMop) continue;
         if (state.regionFilter === "CP" && !isCp) continue;
@@ -951,20 +1091,63 @@
 
         visibleSpikes++;
         const x = ((t - t0) / dt) * width;
-        const y = (c / N_units) * height;
+        const y = (rank / N_units) * height;
 
-        if (isBeh) {
-          ctx.fillStyle = "rgba(16, 185, 129, 0.95)"; // Emerald green for behavioral pokes & reward
-          ctx.fillRect(x - 0.5, y, 2.0, Math.max(2.5, rowH * 1.5));
-        } else if (isMop) {
-          ctx.fillStyle = "rgba(56, 139, 253, 0.75)";  // MOp blue
-          ctx.fillRect(x - 0.5, y, 1.2, Math.max(1.5, rowH * 0.9));
+        const evId = evs[i];
+        const mId  = ms[i];
+
+        // Highlighting Logic
+        if (hlMode === "selected" && sel) {
+          if (evId === sel.id) {
+            // Foreground Attributed Spike!
+            const mInfo = state.manifest?.motifs?.[sel.motif] || {};
+            ctx.globalAlpha = 1.0;
+            ctx.fillStyle = mInfo.color || "#388bfd";
+            ctx.fillRect(x - (spikeW + 0.8) / 2, y - (spikeH + 1.2) / 2, spikeW + 0.8, spikeH + 1.2);
+            if (isCloseZoom) {
+              ctx.fillStyle = "#ffffff";
+              ctx.fillRect(x - 0.5, y - (spikeH / 2), 1.0, spikeH);
+            }
+          } else {
+            // Dimmed background spike
+            ctx.globalAlpha = 0.08;
+            ctx.fillStyle = isBeh ? "var(--beh)" : (isMop ? "var(--mop)" : "var(--cp)");
+            ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
+          }
+        } else if (hlMode === "motif") {
+          if (mId === state.activeMotifId) {
+            const mInfo = state.manifest?.motifs?.[mId] || {};
+            ctx.globalAlpha = 1.0;
+            ctx.fillStyle = mInfo.color || "#388bfd";
+            ctx.fillRect(x - (spikeW + 0.6) / 2, y - (spikeH + 1.0) / 2, spikeW + 0.6, spikeH + 1.0);
+          } else {
+            ctx.globalAlpha = 0.08;
+            ctx.fillStyle = isBeh ? "var(--beh)" : (isMop ? "var(--mop)" : "var(--cp)");
+            ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
+          }
+        } else if (hlMode === "all_motifs") {
+          if (mId > 0 && state.manifest?.motifs?.[mId]) {
+            const mInfo = state.manifest.motifs[mId];
+            ctx.globalAlpha = 0.95;
+            ctx.fillStyle = mInfo.color || "#388bfd";
+            ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
+          } else {
+            // Pure Poisson noise
+            ctx.globalAlpha = 0.07;
+            ctx.fillStyle = "#8b949e";
+            ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
+          }
         } else {
-          ctx.fillStyle = "rgba(240, 136, 62, 0.75)";  // CP orange
-          ctx.fillRect(x - 0.5, y, 1.2, Math.max(1.5, rowH * 0.9));
+          // Anatomical Default Mode
+          ctx.globalAlpha = isCloseZoom ? 0.9 : 0.75;
+          if (isBeh) ctx.fillStyle = "var(--beh)";
+          else if (isMop) ctx.fillStyle = "var(--mop)";
+          else ctx.fillStyle = "var(--cp)";
+          ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
         }
       }
 
+      ctx.globalAlpha = 1.0;
       document.getElementById("spikes-count-badge").textContent = `${visibleSpikes.toLocaleString()} spikes`;
       drawCrosshair(ctx, width, height);
     }
@@ -979,7 +1162,6 @@
       const dt = t1 - t0;
       if (dt <= 0) return;
 
-      // Smart tick calculation
       const roughTicks = 8;
       const rawStep = dt / roughTicks;
       const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
@@ -998,9 +1180,9 @@
         const x = ((t - t0) / dt) * width;
         ctx.beginPath();
         ctx.moveTo(x, 0);
-        ctx.lineTo(x, 5);
+        ctx.lineTo(x, 4);
         ctx.stroke();
-        ctx.fillText(`${t.toFixed(t < 10 && step < 1 ? 2 : 1)}s`, x, 17);
+        ctx.fillText(`${t.toFixed(t < 10 && step < 1 ? 2 : 1)}s`, x, 16);
       }
 
       drawCrosshair(ctx, width, height);
@@ -1008,7 +1190,7 @@
 
     function drawCrosshair(ctx, width, height) {
       if (state.mouseX >= 0 && state.mouseX <= width) {
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(state.mouseX, 0);
@@ -1023,9 +1205,22 @@
         `Viewport: ${state.t_start.toFixed(2)}s – ${state.t_end.toFixed(2)}s (Span: ${span.toFixed(2)}s)`;
     }
 
+    // Highlighting Mode Handler
+    function setHighlightMode(mode) {
+      state.highlightMode = mode;
+      document.querySelectorAll("#highlight-modes .btn-seg").forEach(b => {
+        if (b.dataset.hl === mode) b.classList.add("active");
+        else b.classList.remove("active");
+      });
+      requestRender();
+    }
+
     // Inspector Drawer Handlers
     function openDrawer(ev) {
       state.selectedEvent = ev;
+      state.activeMotifId = ev.motif;
+      setHighlightMode("selected");
+
       const mInfo = state.manifest?.motifs?.[ev.motif] || {};
       const color = mInfo.color || "#388bfd";
 
@@ -1048,6 +1243,9 @@
 
     function closeDrawer() {
       state.selectedEvent = null;
+      if (state.highlightMode === "selected") {
+        setHighlightMode("anatomical");
+      }
       document.getElementById("inspector-drawer").classList.remove("open");
       requestRender();
     }
@@ -1057,8 +1255,8 @@
     document.getElementById("btn-zoom-to-event").onclick = () => {
       if (!state.selectedEvent) return;
       const tau = state.selectedEvent.time;
-      state.t_start = Math.max(0, tau - 0.2);
-      state.t_end = Math.min(state.T_total, tau + 0.8);
+      state.t_start = Math.max(0, tau - 0.25);
+      state.t_end = Math.min(state.T_total, tau + 0.85);
       requestRender();
     };
 
@@ -1069,7 +1267,6 @@
         requestRender();
       });
 
-      // Run selection change
       document.getElementById("run-select").onchange = (e) => {
         loadRun(e.target.value);
       };
@@ -1096,6 +1293,13 @@
         };
       });
 
+      // Highlight Modes
+      document.querySelectorAll("#highlight-modes .btn-seg").forEach(btn => {
+        btn.onclick = () => {
+          setHighlightMode(btn.dataset.hl);
+        };
+      });
+
       // Region filters
       document.querySelectorAll("#region-filters .btn-seg").forEach(btn => {
         btn.onclick = () => {
@@ -1110,6 +1314,7 @@
       document.getElementById("btn-reset-view").onclick = () => {
         state.t_start = 0;
         state.t_end = Math.min(30.0, state.T_total);
+        setHighlightMode("anatomical");
         closeDrawer();
         requestRender();
       };
@@ -1161,7 +1366,6 @@
 
           requestRender();
 
-          // Tooltip on occurrences track
           if (state.hoveredEvent) {
             const ev = state.hoveredEvent;
             const mInfo = state.manifest?.motifs?.[ev.motif] || {};
@@ -1174,7 +1378,7 @@
               Time (τ): ${ev.time.toFixed(4)}s<br>
               Vigor (c): ${(ev.amp || 1.0).toFixed(2)}×<br>
               Warp: ${(ev.warp || 0.0).toFixed(2)}<br>
-              Attributed: ${ev.obs || 0} spikes
+              Attributed Spikes: ${ev.obs || 0}
             `;
           } else {
             tooltip.style.display = "none";
@@ -1246,7 +1450,6 @@
       });
     }
 
-    // Start App
     window.addEventListener("DOMContentLoaded", initExplorer);
   </script>
 </body>

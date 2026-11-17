@@ -84,6 +84,32 @@ class ExplorerHandler(http.server.SimpleHTTPRequestHandler):
                 elif endpoint == "streams":
                     self.send_file(run_dir / "streams.json", "application/json")
                     return
+                elif endpoint == "event_spikes":
+                    spikes_path = run_dir / "spikes.json"
+                    if not spikes_path.exists():
+                        self.send_error(404, "spikes.json not found")
+                        return
+                    ev_str = query.get("event_id", [None])[0]
+                    if ev_str is not None:
+                        try:
+                            ev_id = int(ev_str)
+                            with open(spikes_path, "r", encoding="utf-8") as f:
+                                spk = json.load(f)
+                            ts = spk.get("t", [])
+                            cs = spk.get("c", [])
+                            ranks = spk.get("r", [])
+                            evs = spk.get("ev", [])
+                            filtered_t, filtered_c, filtered_r = [], [], []
+                            for idx, e in enumerate(evs):
+                                if e == ev_id:
+                                    filtered_t.append(ts[idx])
+                                    filtered_c.append(cs[idx])
+                                    filtered_r.append(ranks[idx])
+                            self.send_json({"event_id": ev_id, "t": filtered_t, "c": filtered_c, "r": filtered_r, "total": len(filtered_t)})
+                            return
+                        except Exception as e:
+                            print(f"[Explorer] Error filtering event spikes: {e}")
+
                 elif endpoint == "spikes":
                     spikes_path = run_dir / "spikes.json"
                     if not spikes_path.exists():

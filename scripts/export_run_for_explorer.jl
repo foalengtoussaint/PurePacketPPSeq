@@ -43,19 +43,49 @@ function export_run(
     units_file = joinpath(data_dir, "units.csv")
     units_raw, _ = readdlm(units_file, Char(44), header=true)
     raw_regions = String.(units_raw[:, 3])
-    raw_depths = [coalesce(tryparse(Float64, string(x)), 0.0) for x in units_raw[:, 4]]
+    raw_depths = [coalesce(tryparse(Int, string(x)), 0) for x in units_raw[:, 7]]
     N_neural = length(raw_regions)
     N_units = N_neural
     if beh_names !== nothing
         N_units = max(N_neural, maximum(keys(beh_names)))
     end
 
-    mop_units = findall(r -> startswith(r, "MOp"), raw_regions)
-    cp_units  = findall(r -> !startswith(r, "MOp"), raw_regions)
+    all_mop_idx = findall(r -> startswith(r, "MOp"), raw_regions)
+    all_cp_idx  = findall(r -> !startswith(r, "MOp"), raw_regions)
+
+    # Sort MOp units descending by cortical depth (superficial -> deep)
+    mop_sorted = all_mop_idx[sortperm(raw_depths[all_mop_idx], rev=true)]
+    # Sort CP units descending by striatal depth (dorsal -> ventral)
+    cp_sorted  = all_cp_idx[sortperm(raw_depths[all_cp_idx], rev=true)]
 
     if channel_subset !== nothing
-        mop_units = filter(c -> c in channel_subset, mop_units)
-        cp_units  = filter(c -> c in channel_subset, cp_units)
+        mop_sorted = filter(c -> c in channel_subset, mop_sorted)
+        cp_sorted  = filter(c -> c in channel_subset, cp_sorted)
+    end
+
+    # Build contiguous anatomical rank map:
+    # Ranks 0 .. length(mop_sorted)-1 -> MOp
+    # Ranks length(mop_sorted) .. length(mop_sorted)+length(cp_sorted)-1 -> CP
+    # Ranks length(neural) .. N_units-1 -> Behavioral channels
+    rank_map = Dict{Int, Int}()
+    curr_rank = 0
+    for c in mop_sorted
+        rank_map[c] = curr_rank
+        curr_rank += 1
+    end
+    divider_rank = curr_rank
+
+    for c in cp_sorted
+        rank_map[c] = curr_rank
+        curr_rank += 1
+    end
+    neural_divider_rank = curr_rank
+
+    if beh_names !== nothing
+        for c in sort(collect(keys(beh_names)))
+            rank_map[c] = curr_rank
+            curr_rank += 1
+        end
     end
 
     # 3. Load Spikes
@@ -82,7 +112,35 @@ function export_run(
         T_total = isempty(ts_spk) ? 100.0 : maximum(ts_spk)
     end
 
-    println("Total Spikes: $(length(ts_spk)) across $N_units units (T = $(round(T_total, digits=2)) s)")
+    N_spk = length(ts_spk)
+    println("Total Spikes: $N_spk across $curr_rank active mapped channels (T = $(round(T_total, digits=2)) s)")
+
+    # Align assignments to spikes
+    ev_spk = zeros(Int32, N_spk)
+    m_spk  = zeros(Int32, N_spk)
+
+    if assign !== nothing && length(assign) == length(ts_all)
+        # Sliced or full from global index
+        for (out_i, glob_i) in enumerate(valid_idx)
+            a = assign[glob_i]
+            if a.event_id > 0 && haskey(occs, a.event_id)
+                ev_spk[out_i] = Int32(a.event_id)
+                m_spk[out_i]  = Int32(occs[a.event_id].motif)
+            end
+        end
+    elseif assign !== nothing && length(assign) == N_spk
+        # Directly matching sliced spikes
+        for out_i in 1:N_spk
+            a = assign[out_i]
+            if a.event_id > 0 && haskey(occs, a.event_id)
+                ev_spk[out_i] = Int32(a.event_id)
+                m_spk[out_i]  = Int32(occs[a.event_id].motif)
+            end
+        end
+    end
+
+    n_fg = count(>(0), ev_spk)
+    println("Foreground Spikes Identified: $n_fg ($(round(100.0 * n_fg / max(1, N_spk), digits=1))%)")
 
     # 4. Process Motifs
     palette = [
@@ -97,8 +155,8 @@ function export_run(
         P = length(m.packets)
         color = palette[mod1(m_idx, length(palette))]
         
-        mop_mus = [p.mu for p in m.packets if p.channel in mop_units]
-        cp_mus  = [p.mu for p in m.packets if p.channel in cp_units]
+        mop_mus = [p.mu for p in m.packets if p.channel in mop_sorted]
+        cp_mus  = [p.mu for p in m.packets if p.channel in cp_sorted]
         mop_mean_mu = isempty(mop_mus) ? 0.0 : mean(mop_mus)
         cp_mean_mu  = isempty(cp_mus) ? 0.0 : mean(cp_mus)
         delta_lag_ms = (cp_mean_mu - mop_mean_mu) * 1000.0
@@ -123,6 +181,7 @@ function export_run(
             "packets" => [
                 Dict(
                     "channel" => p.channel,
+                    "rank" => get(rank_map, p.channel, 0),
                     "mu" => round(p.mu, digits=4),
                     "sigma" => round(sqrt(max(p.var, 1e-6)), digits=4),
                     "mass" => round(p.mass, digits=3)
@@ -195,21 +254,51 @@ function export_run(
         streams_dict = Dict("time" => [0.0, T_total], "streams" => [])
     end
 
-    # 7. Downsampled Overview Spikes (LOD for 60-FPS canvas rendering)
-    println("Preparing multi-scale spike data...")
-    step_sub = max(1, Int(floor(length(ts_spk) / 120000)))
-    sub_idx = 1:step_sub:length(ts_spk)
-    
+    # 7. Multi-scale overview: Keep 100% of foreground sequence spikes, subsample Poisson background
+    println("Preparing multi-scale raster with foreground preservation...")
+    fg_indices = findall(>(0), ev_spk)
+    bg_indices = findall(==(0), ev_spk)
+
+    target_bg = max(10000, 120000 - length(fg_indices))
+    bg_step = max(1, Int(floor(length(bg_indices) / target_bg)))
+    selected_bg = bg_indices[1:bg_step:end]
+
+    combined_indices = sort(vcat(fg_indices, selected_bg))
+
+    ts_sub = [round(ts_spk[i], digits=4) for i in combined_indices]
+    ch_sub = ch_spk[combined_indices]
+    rank_sub = [get(rank_map, c, 0) for c in ch_sub]
+    ev_sub = ev_spk[combined_indices]
+    m_sub  = m_spk[combined_indices]
+
     spikes_overview = Dict(
-        "t" => [round(t, digits=3) for t in ts_spk[sub_idx]],
-        "c" => ch_spk[sub_idx],
-        "total_count" => length(ts_spk)
+        "t" => ts_sub,
+        "c" => ch_sub,
+        "r" => rank_sub,
+        "ev" => ev_sub,
+        "m" => m_sub,
+        "total_count" => N_spk,
+        "fg_count" => n_fg
     )
 
     # 8. Manifest Metadata
     regions_dict = Dict{String, Any}(
-        "MOp" => Dict("name" => "Motor Cortex (MOp)", "count" => length(mop_units), "channels" => mop_units, "color" => "#388bfd"),
-        "CP"  => Dict("name" => "Dorsal Striatum (CP)", "count" => length(cp_units),  "channels" => cp_units,  "color" => "#f0883e")
+        "MOp" => Dict(
+            "name" => "Motor Cortex (MOp)",
+            "count" => length(mop_sorted),
+            "channels" => mop_sorted,
+            "rank_start" => 0,
+            "rank_end" => divider_rank - 1,
+            "color" => "#388bfd"
+        ),
+        "CP"  => Dict(
+            "name" => "Dorsal Striatum (CP)",
+            "count" => length(cp_sorted),
+            "channels" => cp_sorted,
+            "rank_start" => divider_rank,
+            "rank_end" => neural_divider_rank - 1,
+            "color" => "#f0883e"
+        )
     )
     if beh_names !== nothing
         beh_chans = sort(collect(keys(beh_names)))
@@ -217,6 +306,8 @@ function export_run(
             "name" => "Task Pokes & Reward",
             "count" => length(beh_chans),
             "channels" => beh_chans,
+            "rank_start" => neural_divider_rank,
+            "rank_end" => curr_rank - 1,
             "color" => "#10b981",
             "labels" => [beh_names[c] for c in beh_chans]
         )
@@ -227,10 +318,14 @@ function export_run(
         "run_name" => run_name,
         "session" => basename(data_dir),
         "duration" => round(T_total, digits=2),
-        "n_units" => N_units,
-        "n_spikes" => length(ts_spk),
+        "n_units" => curr_rank,
+        "n_spikes" => N_spk,
+        "n_fg_spikes" => n_fg,
         "n_motifs" => length(motifs),
         "n_events" => length(occs),
+        "divider_rank" => divider_rank,
+        "neural_divider_rank" => neural_divider_rank,
+        "rank_map" => [get(rank_map, c, 0) for c in 1:N_units],
         "regions" => regions_dict,
         "motifs" => motifs_dict,
         "active_streams" => active_stream_ids
