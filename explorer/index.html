@@ -218,6 +218,12 @@
       color: #fff;
       border-color: rgba(255, 255, 255, 0.3);
     }
+    .motif-chip.focused {
+      border-color: var(--primary) !important;
+      box-shadow: 0 0 8px rgba(88, 166, 255, 0.45);
+      color: #fff !important;
+      font-weight: 700;
+    }
     .chip-dot {
       width: 6px;
       height: 6px;
@@ -260,7 +266,7 @@
       display: flex;
       gap: 12px;
       position: relative;
-      min-height: 0; /* Enables flex item to shrink/grow properly */
+      min-height: 0;
       align-items: stretch;
     }
 
@@ -438,14 +444,23 @@
       </div>
     </div>
 
-    <!-- Highlight Mode -->
+    <!-- Contrast Hierarchy -->
     <div class="control-section">
-      <span class="control-label">Spikes:</span>
-      <div class="btn-group" id="highlight-modes">
-        <button class="btn-seg active" data-hl="anatomical" title="Standard anatomical colors (MOp blue, CP orange)">Anatomical</button>
-        <button class="btn-seg" data-hl="selected" title="Illuminate attributed spikes of selected event, dim background">Active Event</button>
-        <button class="btn-seg" data-hl="motif" title="Highlight all sequence spikes for active motif">By Motif</button>
-        <button class="btn-seg" data-hl="all_motifs" title="Highlight ALL foreground motif spikes, dim Poisson background">All Motifs (Foreground)</button>
+      <span class="control-label">Contrast:</span>
+      <div class="btn-group" id="contrast-modes">
+        <button class="btn-seg active" data-contrast="off" data-hl="anatomical" title="Level 0: No contrast (100% visible raw spikes in MOp/CP anatomical colors)">Off</button>
+        <button class="btn-seg" data-contrast="foreground" data-hl="all_motifs" title="Level 1: Contrast between sequence foreground (vivid colors) and Poisson background (visible muted slate)">Foreground</button>
+        <button class="btn-seg" data-contrast="motif" data-hl="motif" title="Level 2: Contrast between active motif (100% vivid color) and all other spikes (muted context)">By Motif</button>
+        <button class="btn-seg" data-contrast="occurrence" data-hl="selected" title="Level 3: Contrast between selected occurrence (isolated & glowing) and surrounding spikes">By Occurrence</button>
+      </div>
+    </div>
+
+    <!-- Sort Order Toggle -->
+    <div class="control-section">
+      <span class="control-label">Sort:</span>
+      <div class="btn-group" id="sort-modes">
+        <button class="btn-seg active" data-sort="depth" title="Anatomical depth order (MOp cortex top, CP striatum bottom)">Depth</button>
+        <button class="btn-seg" data-sort="waterfall" title="Sort units by temporal latency into diagonal waterfall cascade for active motif">Motif Waterfall</button>
       </div>
     </div>
 
@@ -546,7 +561,10 @@
       selectedEvent: null,
       activeMotifs: new Set(),
       activeMotifId: 1,
-      highlightMode: "anatomical", // "anatomical" | "selected" | "motif" | "all_motifs"
+      contrastMode: "off", // "off" | "foreground" | "motif" | "occurrence"
+      highlightMode: "anatomical", // legacy alias
+      sortMode: "depth", // "depth" | "waterfall"
+      sortingMaps: {},
       regionFilter: "all",
       isDraggingScrubber: false,
       isPanningCanvas: false,
@@ -600,7 +618,6 @@
             select.appendChild(opt);
           });
 
-          // Check if specific run is requested via URL
           const urlParams = new URLSearchParams(window.location.search);
           const runParam = urlParams.get("run");
           const initialRun = (runParam && runs.some(r => r.id === runParam)) ? runParam : runs[0].id;
@@ -636,8 +653,14 @@
         state.t_start = Math.max(0, parseFloat(urlParams.get("t0")));
         state.t_end = Math.min(state.T_total, parseFloat(urlParams.get("t1")));
       }
+      if (urlParams.has("contrast")) {
+        setContrastMode(urlParams.get("contrast"));
+      }
       if (urlParams.has("hl")) {
         setHighlightMode(urlParams.get("hl"));
+      }
+      if (urlParams.has("sort")) {
+        setSortMode(urlParams.get("sort"));
       }
       if (urlParams.has("motif")) {
         const m = parseInt(urlParams.get("motif"));
@@ -667,6 +690,44 @@
       state.t_end = Math.min(30.0, state.T_total);
       state.selectedEvent = null;
 
+      // Precompute dynamic latency sorting orders for each motif
+      state.sortingMaps = {};
+      const N_neural = state.manifest?.neural_divider_rank || state.manifest?.n_units || 411;
+
+      Object.entries(manifest.motifs || {}).forEach(([mId, mInfo]) => {
+        const unitMus = {};
+        if (mInfo.packets) {
+          mInfo.packets.forEach(p => {
+            const ch = p.channel;
+            const rank = p.rank !== undefined ? p.rank : (ch - 1);
+            if (rank < N_neural) {
+              if (unitMus[rank] === undefined || p.mu < unitMus[rank]) {
+                unitMus[rank] = p.mu;
+              }
+            }
+          });
+        }
+
+        const participating = Object.keys(unitMus).map(Number).sort((a, b) => unitMus[a] - unitMus[b]);
+        const partSet = new Set(participating);
+
+        const nonParticipating = [];
+        for (let r = 0; r < N_neural; r++) {
+          if (!partSet.has(r)) nonParticipating.push(r);
+        }
+
+        const sortedOrder = participating.concat(nonParticipating);
+        const invMap = new Int32Array(N_neural);
+        for (let rank = 0; rank < sortedOrder.length; rank++) {
+          invMap[sortedOrder[rank]] = rank;
+        }
+
+        state.sortingMaps[mId] = {
+          invMap: invMap,
+          nParticipating: participating.length
+        };
+      });
+
       // Populate Motifs
       state.activeMotifs.clear();
       const chipContainer = document.getElementById("motif-chips-container");
@@ -694,12 +755,16 @@
             }
           } else {
             state.activeMotifId = mId;
-            setHighlightMode("motif");
+            updateFocusedMotifChip();
+            if (state.contrastMode !== "off" && state.contrastMode !== "foreground") {
+              setContrastMode("motif");
+            }
           }
           requestRender();
         };
         chipContainer.appendChild(chip);
       });
+      updateFocusedMotifChip();
 
       // Region filters setup
       const regFilters = document.getElementById("region-filters");
@@ -983,7 +1048,7 @@
       });
       ctx.textAlign = "left";
 
-      // Render Sequence Occurrences
+      // Render Sequence Occurrences with deterministic peak-hold per pixel column
       state.renderedOccurrences = [];
       state.hoveredEvent = null;
 
@@ -993,11 +1058,12 @@
         const motifSpikeW = isCloseZoom ? 2.5 : (isMediumZoom ? 1.8 : 1.2);
         const sel = state.selectedEvent;
 
-        // Adaptive stride on occurrences when deeply zoomed out
+        // Deterministic peak-hold per motif per pixel column when zoomed out
         const evCount = state.events.length;
-        const evStride = (evCount > 4000 && tSpan > 200) ? Math.ceil(evCount / 4000) : 1;
+        const usePeakHold = tSpan > 120.0;
+        const lastEvPx = {};
 
-        for (let i = 0; i < evCount; i += evStride) {
+        for (let i = 0; i < evCount; i++) {
           const ev = state.events[i];
           if (!state.activeMotifs.has(ev.motif)) continue;
           if (ev.time < t0 - 1.0 || ev.time > t1 + 1.0) continue;
@@ -1009,6 +1075,16 @@
           const ex = padL + ((ev.time - t0) / tSpan) * plotW;
           const isSelected = sel && sel.id === ev.id;
           const color = MOTIF_PALETTE[ev.motif] || "#58a6ff";
+
+          // Peak hold filtering: If two events of same motif occur in exact same pixel, keep stronger one
+          if (usePeakHold && !isSelected) {
+            const pxCol = Math.round(ex);
+            const key = (ev.motif << 16) | pxCol;
+            if (lastEvPx[key] !== undefined && lastEvPx[key] >= (ev.amp || 1.0)) {
+              continue; // A stronger or equal occurrence is already drawn at this pixel!
+            }
+            lastEvPx[key] = (ev.amp || 1.0);
+          }
 
           const normAmp = Math.min(1.0, Math.max(0.12, Math.sqrt(ev.amp || 1.0) / 1.5));
           const maxSpkH = Math.max(3.5, rowH - 2.5);
@@ -1061,7 +1137,7 @@
       ctx.stroke();
 
       // -------------------------------------------------------------
-      // 3. LEVEL 0 · MULTI-UNIT SPIKE RASTER (Depth-Ordered Contiguous Anatomy)
+      // 3. LEVEL 0 · MULTI-UNIT SPIKE RASTER (Depth vs Motif Waterfall)
       // -------------------------------------------------------------
       ctx.fillStyle = "rgba(255, 255, 255, 0.012)";
       ctx.fillRect(padL, padT_spike, plotW, h_spike);
@@ -1069,54 +1145,94 @@
       const N_units = state.manifest?.n_units || 411;
       const divRank = state.manifest?.divider_rank || 208;
       const neuralDivRank = state.manifest?.neural_divider_rank || N_units;
-      const N_neural = neuralDivRank; // Only neural units are mapped to h_spike!
+      const N_neural = neuralDivRank;
 
-      // Anatomical gutter labels (MOp and CP)
-      const mopMidY = padT_spike + (divRank / N_neural) * h_spike * 0.5;
-      ctx.textAlign = "right";
-      ctx.fillStyle = "#58a6ff";
-      ctx.font = "bold 11px -apple-system, system-ui";
-      ctx.fillText("MOp", padL - 8, mopMidY - 3);
-      ctx.fillStyle = "#8b949e";
-      ctx.font = "8.5px ui-monospace, monospace";
-      ctx.fillText(`${divRank} u`, padL - 8, mopMidY + 9);
+      const isWaterfall = state.sortMode === "waterfall" && state.sortingMaps && state.sortingMaps[state.activeMotifId];
+      const rankMap = isWaterfall ? state.sortingMaps[state.activeMotifId].invMap : null;
+      const nPart = isWaterfall ? state.sortingMaps[state.activeMotifId].nParticipating : 0;
 
-      // Region dividing dashed line (between MOp and CP)
-      const sepY = padT_spike + (divRank / N_neural) * h_spike;
-      if (state.regionFilter === "all") {
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+      if (isWaterfall) {
+        // MOTIF WATERFALL CASCADE SORTING
+        const sepY = padT_spike + (nPart / N_neural) * h_spike;
+        ctx.strokeStyle = MOTIF_PALETTE[state.activeMotifId] || "rgba(255, 255, 255, 0.25)";
         ctx.setLineDash([4, 4]);
         ctx.beginPath();
         ctx.moveTo(padL, sepY);
         ctx.lineTo(w - padR, sepY);
         ctx.stroke();
         ctx.setLineDash([]);
+
+        // Left Gutter Tags
+        ctx.textAlign = "right";
+        ctx.fillStyle = "#8b949e";
+        ctx.font = "bold 9px ui-monospace, monospace";
+        ctx.fillText("Earliest", padL - 8, padT_spike + 14);
+        ctx.fillText("Latest", padL - 8, sepY - 4);
+        ctx.fillText("Non-part", padL - 8, sepY + 16);
+        ctx.textAlign = "left";
+
+        // Track badges
+        ctx.fillStyle = "rgba(15, 21, 35, 0.75)";
+        ctx.fillRect(padL + 6, sepY - 17, 340, 14);
+        ctx.fillStyle = MOTIF_PALETTE[state.activeMotifId] || "#58a6ff";
+        ctx.font = "bold 9px -apple-system, system-ui";
+        ctx.fillText(`↑ Motif M${state.activeMotifId} Waterfall Cascade (${nPart} Participating Units)`, padL + 10, sepY - 6);
+
+        ctx.fillStyle = "rgba(15, 21, 35, 0.75)";
+        ctx.fillRect(padL + 6, sepY + 3, 220, 14);
+        ctx.fillStyle = "#8b949e";
+        ctx.fillText(`↓ Non-Participating (${N_neural - nPart} Units)`, padL + 10, sepY + 13);
+
+      } else {
+        // ANATOMICAL DEPTH SORTING
+        const mopMidY = padT_spike + (divRank / N_neural) * h_spike * 0.5;
+        ctx.textAlign = "right";
+        ctx.fillStyle = "#58a6ff";
+        ctx.font = "bold 11px -apple-system, system-ui";
+        ctx.fillText("MOp", padL - 8, mopMidY - 3);
+        ctx.fillStyle = "#8b949e";
+        ctx.font = "8.5px ui-monospace, monospace";
+        ctx.fillText(`${divRank} u`, padL - 8, mopMidY + 9);
+
+        const sepY = padT_spike + (divRank / N_neural) * h_spike;
+        if (state.regionFilter === "all") {
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(padL, sepY);
+          ctx.lineTo(w - padR, sepY);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        const cpMidY = sepY + ((N_neural - divRank) / N_neural) * h_spike * 0.5;
+        ctx.fillStyle = "#ff9b54";
+        ctx.font = "bold 11px -apple-system, system-ui";
+        ctx.fillText("CP", padL - 8, cpMidY - 3);
+        ctx.fillStyle = "#8b949e";
+        ctx.font = "8.5px ui-monospace, monospace";
+        ctx.fillText(`${N_neural - divRank} u`, padL - 8, cpMidY + 9);
+        ctx.textAlign = "left";
+
+        ctx.fillStyle = "rgba(15, 21, 35, 0.75)";
+        ctx.fillRect(padL + 6, padT_spike + 3, 235, 14);
+        ctx.fillStyle = "rgba(88, 166, 255, 0.95)";
+        ctx.font = "bold 9px -apple-system, system-ui";
+        ctx.fillText(`Motor Cortex (MOp) · ${divRank} Units Sorted by Depth`, padL + 10, padT_spike + 13);
+
+        ctx.fillStyle = "rgba(15, 21, 35, 0.75)";
+        ctx.fillRect(padL + 6, sepY + 3, 235, 14);
+        ctx.fillStyle = "rgba(255, 155, 84, 0.95)";
+        ctx.fillText(`Dorsal Striatum (CP) · ${N_neural - divRank} Units Sorted by Depth`, padL + 10, sepY + 13);
       }
 
-      // CP gutter label
-      const cpMidY = sepY + ((N_neural - divRank) / N_neural) * h_spike * 0.5;
-      ctx.fillStyle = "#ff9b54";
-      ctx.font = "bold 11px -apple-system, system-ui";
-      ctx.fillText("CP", padL - 8, cpMidY - 3);
-      ctx.fillStyle = "#8b949e";
-      ctx.font = "8.5px ui-monospace, monospace";
-      ctx.fillText(`${N_neural - divRank} u`, padL - 8, cpMidY + 9);
-      ctx.textAlign = "left";
-
-      // Inside track section badges with subtle backdrop
-      ctx.fillStyle = "rgba(15, 21, 35, 0.75)";
-      ctx.fillRect(padL + 6, padT_spike + 3, 235, 14);
-      ctx.fillStyle = "rgba(88, 166, 255, 0.95)";
-      ctx.font = "bold 9px -apple-system, system-ui";
-      ctx.fillText(`Motor Cortex (MOp) · ${divRank} Units Sorted by Depth`, padL + 10, padT_spike + 13);
-
-      ctx.fillStyle = "rgba(15, 21, 35, 0.75)";
-      ctx.fillRect(padL + 6, sepY + 3, 235, 14);
-      ctx.fillStyle = "rgba(255, 155, 84, 0.95)";
-      ctx.fillText(`Dorsal Striatum (CP) · ${N_neural - divRank} Units Sorted by Depth`, padL + 10, sepY + 13);
-
       const sel = state.selectedEvent;
-      const hlMode = state.highlightMode;
+      const cMode = state.contrastMode || (
+        state.highlightMode === "anatomical" ? "off" :
+        state.highlightMode === "all_motifs" ? "foreground" :
+        state.highlightMode === "selected" ? "occurrence" :
+        state.highlightMode === "motif" ? "motif" : "off"
+      );
 
       // Shaded occurrence footprint window
       if (sel) {
@@ -1134,7 +1250,7 @@
         ctx.globalAlpha = 1.0;
       }
 
-      // Draw Neural Spikes with Adaptive Stride (60 FPS Performance Guarantee)
+      // DETERMINISTIC STRUCTURE-PRESERVING PIXEL OCCUPANCY SPIKE RENDERING
       if (state.spikes && state.spikes.t && state.spikes.t.length > 0) {
         const ts = state.spikes.t;
         const ranks = state.spikes.r;
@@ -1143,24 +1259,22 @@
 
         const idx0 = searchSorted(ts, t0 - 0.1);
         const idx1 = searchSorted(ts, t1 + 0.1);
-        const countInView = Math.max(0, idx1 - idx0);
-
-        // Adaptive stride prevents drawing millions of points when zoomed out
-        const maxDrawPoints = 65000;
-        const stride = countInView > maxDrawPoints ? Math.ceil(countInView / maxDrawPoints) : 1;
 
         const isCloseZoom = tSpan < 2.5;
         const isMediumZoom = tSpan < 15.0;
         const spikeW = isCloseZoom ? 2.5 : (isMediumZoom ? 1.8 : 1.2);
         const spikeH = isCloseZoom ? 4.8 : (isMediumZoom ? 3.4 : 2.2);
 
-        // Pass 1: Background neural spikes (strided for 60 FPS)
-        for (let i = idx0; i < idx1; i += stride) {
-          const rank = ranks[i];
-          if (rank >= N_neural) continue; // Behavioral channels are routed to POKES track!
+        // Deterministic pixel occupancy: Only 1 draw call per unit per pixel column!
+        // Guarantees bursts and sequences maintain 100% density without arbitrary skipping!
+        const usePixelOccupancy = tSpan > 45.0;
+        const lastBgX = new Int32Array(N_neural).fill(-1000);
+        const lastFgX = new Int32Array(N_neural).fill(-1000);
 
-          const t = ts[i];
-          if (t < t0 || t > t1) continue;
+        // PASS 1: BACKGROUND / NON-PRIORITIZED SPIKES
+        for (let i = idx0; i < idx1; i++) {
+          const rank = ranks[i];
+          if (rank >= N_neural) continue;
 
           const isMop = rank < divRank;
           const isCp  = rank >= divRank && rank < N_neural;
@@ -1168,47 +1282,58 @@
           if (state.regionFilter === "MOp" && !isMop) continue;
           if (state.regionFilter === "CP" && !isCp) continue;
 
-          const x = padL + ((t - t0) / tSpan) * plotW;
-          const y = padT_spike + (rank / N_neural) * h_spike;
+          const t = ts[i];
+          if (t < t0 || t > t1) continue;
 
+          const mappedRank = rankMap ? rankMap[rank] : rank;
+          const x = padL + ((t - t0) / tSpan) * plotW;
+          const pxCol = Math.round(x);
+
+          if (usePixelOccupancy) {
+            if (lastBgX[mappedRank] === pxCol) continue;
+            lastBgX[mappedRank] = pxCol;
+          }
+
+          const y = padT_spike + (mappedRank / N_neural) * h_spike;
           const evId = evs[i];
           const mId  = ms[i];
 
-          if (hlMode === "selected" && sel) {
+          if (cMode === "occurrence" && sel) {
             if (evId !== sel.id) {
-              ctx.globalAlpha = 0.08;
+              // Visible muted background context (never completely blacked out!)
+              ctx.globalAlpha = 0.18;
               ctx.fillStyle = isMop ? "#58a6ff" : "#ff9b54";
               ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
             }
-          } else if (hlMode === "motif") {
-            if (mId === state.activeMotifId) {
-              ctx.globalAlpha = 1.0;
-              ctx.fillStyle = MOTIF_PALETTE[mId] || "#58a6ff";
-              ctx.fillRect(x - (spikeW + 0.6) / 2, y - (spikeH + 1.2) / 2, spikeW + 0.6, spikeH + 1.2);
-            } else {
-              ctx.globalAlpha = 0.08;
-              ctx.fillStyle = isMop ? "#58a6ff" : "#ff9b54";
+          } else if (cMode === "motif") {
+            if (mId !== state.activeMotifId) {
+              // Visible muted background context (distinguishing Poisson vs other motifs)
+              if (mId === 0) {
+                ctx.globalAlpha = 0.18;
+                ctx.fillStyle = isMop ? "#4a6890" : "#805840";
+              } else {
+                ctx.globalAlpha = 0.22;
+                ctx.fillStyle = isMop ? "#58a6ff" : "#ff9b54";
+              }
               ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
             }
-          } else if (hlMode === "all_motifs") {
-            if (mId > 0) {
-              ctx.globalAlpha = 0.95;
-              ctx.fillStyle = MOTIF_PALETTE[mId] || "#58a6ff";
-              ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
-            } else {
-              ctx.globalAlpha = 0.06;
-              ctx.fillStyle = "#484f58";
+          } else if (cMode === "foreground") {
+            if (mId === 0) {
+              // Poisson background noise: Distinct, readable muted tone (never 0.04 blacked out!)
+              ctx.globalAlpha = 0.25;
+              ctx.fillStyle = isMop ? "#4a6890" : "#805840";
               ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
             }
           } else {
+            // Level 0: No contrast / Uniform raw spikes (100% visible MOp/CP)
             ctx.globalAlpha = isCloseZoom ? 0.95 : 0.85;
             ctx.fillStyle = isMop ? "#58a6ff" : "#ff9b54";
             ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
           }
         }
 
-        // Pass 2: Attributed Spikes (Always 100% drawn without stride!)
-        if (hlMode === "selected" && sel) {
+        // PASS 2: FOREGROUND ATTRIBUTED SEQUENCE SPIKES (100% SIGNAL INTEGRITY)
+        if (cMode === "occurrence" && sel) {
           const aSpikeW = Math.max(2.8, spikeW + 1.2);
           const aSpikeH = Math.max(4.5, spikeH + 1.8);
           const mColor = MOTIF_PALETTE[sel.motif] || "#58a6ff";
@@ -1222,9 +1347,10 @@
               if (state.regionFilter === "MOp" && !isMop) continue;
               if (state.regionFilter === "CP" && isMop) continue;
 
+              const mappedRank = rankMap ? rankMap[rank] : rank;
               const t = ts[i];
               const ax = padL + ((t - t0) / tSpan) * plotW;
-              const ay = padT_spike + (rank / N_neural) * h_spike;
+              const ay = padT_spike + (mappedRank / N_neural) * h_spike;
 
               ctx.globalAlpha = 1.0;
               ctx.fillStyle = mColor;
@@ -1234,6 +1360,72 @@
                 ctx.fillStyle = "#ffffff";
                 ctx.fillRect(ax - 0.5, ay - aSpikeH / 2, 1.0, aSpikeH);
               }
+            }
+          }
+        } else if (cMode === "motif") {
+          // Active Motif Spikes: Always 100% rendered with zero downsampling in vivid color!
+          const aSpikeW = Math.max(2.2, spikeW + 0.8);
+          const aSpikeH = Math.max(3.8, spikeH + 1.2);
+          const mColor = MOTIF_PALETTE[state.activeMotifId] || "#58a6ff";
+
+          for (let i = idx0; i < idx1; i++) {
+            if (ms[i] === state.activeMotifId) {
+              const rank = ranks[i];
+              if (rank >= N_neural) continue;
+
+              const isMop = rank < divRank;
+              if (state.regionFilter === "MOp" && !isMop) continue;
+              if (state.regionFilter === "CP" && isMop) continue;
+
+              const mappedRank = rankMap ? rankMap[rank] : rank;
+              const t = ts[i];
+              const ax = padL + ((t - t0) / tSpan) * plotW;
+              const pxCol = Math.round(ax);
+
+              if (usePixelOccupancy) {
+                if (lastFgX[mappedRank] === pxCol) continue;
+                lastFgX[mappedRank] = pxCol;
+              }
+
+              const ay = padT_spike + (mappedRank / N_neural) * h_spike;
+
+              ctx.globalAlpha = 1.0;
+              ctx.fillStyle = mColor;
+              ctx.fillRect(ax - aSpikeW / 2, ay - aSpikeH / 2, aSpikeW, aSpikeH);
+
+              if (isCloseZoom) {
+                ctx.fillStyle = "#ffffff";
+                ctx.fillRect(ax - 0.5, ay - aSpikeH / 2, 1.0, aSpikeH);
+              }
+            }
+          }
+        } else if (cMode === "foreground") {
+          // Foreground: Full-fidelity sequence wavefronts across all motifs!
+          for (let i = idx0; i < idx1; i++) {
+            const mId = ms[i];
+            if (mId > 0) {
+              const rank = ranks[i];
+              if (rank >= N_neural) continue;
+
+              const isMop = rank < divRank;
+              if (state.regionFilter === "MOp" && !isMop) continue;
+              if (state.regionFilter === "CP" && isMop) continue;
+
+              const mappedRank = rankMap ? rankMap[rank] : rank;
+              const t = ts[i];
+              const ax = padL + ((t - t0) / tSpan) * plotW;
+              const pxCol = Math.round(ax);
+
+              if (usePixelOccupancy) {
+                if (lastFgX[mappedRank] === pxCol) continue;
+                lastFgX[mappedRank] = pxCol;
+              }
+
+              const ay = padT_spike + (mappedRank / N_neural) * h_spike;
+
+              ctx.globalAlpha = 0.95;
+              ctx.fillStyle = MOTIF_PALETTE[mId] || "#58a6ff";
+              ctx.fillRect(ax - spikeW / 2, ay - spikeH / 2, spikeW, spikeH);
             }
           }
         }
@@ -1258,12 +1450,16 @@
         ctx.fillStyle = "#3fb950";
         const isClose = tSpan < 5.0;
         const pLen = state.pokes.length;
-        const pStride = (pLen > 4000 && tSpan > 200) ? Math.ceil(pLen / 4000) : 1;
+        let lastPokePx = -1000;
 
-        for (let i = 0; i < pLen; i += pStride) {
+        for (let i = 0; i < pLen; i++) {
           const p = state.pokes[i];
           if (p.time < t0 || p.time > t1) continue;
           const px = padL + ((p.time - t0) / tSpan) * plotW;
+          const pxCol = Math.round(px);
+
+          if (tSpan > 100 && pxCol === lastPokePx) continue;
+          lastPokePx = pxCol;
           
           ctx.beginPath();
           ctx.arc(px, padT_beh + h_beh * 0.5, 3.2, 0, Math.PI * 2);
@@ -1284,14 +1480,18 @@
         const ranks = state.spikes.r;
         const idx0 = searchSorted(ts, t0 - 0.1);
         const idx1 = searchSorted(ts, t1 + 0.1);
-        const bCount = idx1 - idx0;
-        const bStride = (bCount > 3000 && tSpan > 200) ? Math.ceil(bCount / 3000) : 1;
+        let lastBehPx = -1000;
 
-        for (let i = idx0; i < idx1; i += bStride) {
+        for (let i = idx0; i < idx1; i++) {
           const rank = ranks[i];
           if (rank >= neuralDivRank) {
             const t = ts[i];
             const px = padL + ((t - t0) / tSpan) * plotW;
+            const pxCol = Math.round(px);
+
+            if (tSpan > 100 && pxCol === lastBehPx) continue;
+            lastBehPx = pxCol;
+
             const portIdx = rank - neuralDivRank;
             const isReward = portIdx === 14;
 
@@ -1368,11 +1568,43 @@
         `Viewport: ${state.t_start.toFixed(2)}s – ${state.t_end.toFixed(2)}s (Span: ${span.toFixed(2)}s)`;
     }
 
-    // Highlighting Mode Handler
+    function updateFocusedMotifChip() {
+      document.querySelectorAll(".motif-chip").forEach(chip => {
+        if (parseInt(chip.dataset.mid) === state.activeMotifId) {
+          chip.classList.add("focused");
+        } else {
+          chip.classList.remove("focused");
+        }
+      });
+    }
+
+    // Contrast Hierarchy Mode Handler (Off | Foreground | By Motif | By Occurrence)
+    function setContrastMode(mode) {
+      state.contrastMode = mode;
+      state.highlightMode = mode; // keep in sync
+      document.querySelectorAll("#contrast-modes .btn-seg").forEach(b => {
+        if (b.dataset.contrast === mode || b.dataset.hl === mode) b.classList.add("active");
+        else b.classList.remove("active");
+      });
+      requestRender();
+    }
+
+    // Backward-compatible alias
     function setHighlightMode(mode) {
-      state.highlightMode = mode;
-      document.querySelectorAll("#highlight-modes .btn-seg").forEach(b => {
-        if (b.dataset.hl === mode) b.classList.add("active");
+      const modeMap = {
+        "anatomical": "off",
+        "all_motifs": "foreground",
+        "selected": "occurrence",
+        "motif": "motif"
+      };
+      setContrastMode(modeMap[mode] || mode);
+    }
+
+    // Sort Mode Handler (Depth vs Motif Waterfall)
+    function setSortMode(mode) {
+      state.sortMode = mode;
+      document.querySelectorAll("#sort-modes .btn-seg").forEach(b => {
+        if (b.dataset.sort === mode) b.classList.add("active");
         else b.classList.remove("active");
       });
       requestRender();
@@ -1382,7 +1614,10 @@
     function openDrawer(ev) {
       state.selectedEvent = ev;
       state.activeMotifId = ev.motif;
-      setHighlightMode("selected");
+      updateFocusedMotifChip();
+      if (state.contrastMode !== "off") {
+        setContrastMode("occurrence");
+      }
 
       const color = MOTIF_PALETTE[ev.motif] || "#58a6ff";
       const mInfo = state.manifest?.motifs?.[ev.motif] || {};
@@ -1406,8 +1641,8 @@
 
     function closeDrawer() {
       state.selectedEvent = null;
-      if (state.highlightMode === "selected") {
-        setHighlightMode("anatomical");
+      if (state.contrastMode === "occurrence") {
+        setContrastMode("off");
       }
       document.getElementById("inspector-drawer").classList.remove("open");
       requestRender();
@@ -1456,10 +1691,21 @@
         };
       });
 
-      // Highlight Modes
-      document.querySelectorAll("#highlight-modes .btn-seg").forEach(btn => {
+      // Contrast Hierarchy Modes (Off | Foreground | By Motif | By Occurrence)
+      document.querySelectorAll("#contrast-modes .btn-seg, #highlight-modes .btn-seg").forEach(btn => {
         btn.onclick = () => {
-          setHighlightMode(btn.dataset.hl);
+          if (btn.dataset.contrast) {
+            setContrastMode(btn.dataset.contrast);
+          } else if (btn.dataset.hl) {
+            setHighlightMode(btn.dataset.hl);
+          }
+        };
+      });
+
+      // Sort Modes (Depth vs Waterfall)
+      document.querySelectorAll("#sort-modes .btn-seg").forEach(btn => {
+        btn.onclick = () => {
+          setSortMode(btn.dataset.sort);
         };
       });
 
@@ -1478,6 +1724,7 @@
         state.t_start = 0;
         state.t_end = Math.min(30.0, state.T_total);
         setHighlightMode("anatomical");
+        setSortMode("depth");
         closeDrawer();
         requestRender();
       };
