@@ -43,10 +43,10 @@ The package is built around a compositional hierarchy of generative tiers ($m = 
 
 | Tier | Mathematical Mechanism | Generative Contribution | Source Module |
 | :--- | :--- | :--- | :--- |
-| **$m = 0$** | Multi-Scale Background Floor | Baseline firing rate $\bar{\lambda}_{0,c}$ and stationary Poisson noise | `src/scales/`, `m0_floor.jl` |
-| **$m = 1$** | Biophysical Spike Packets | Localized Gaussian packet archetype $(a_p, \mu_p, \sigma_p^2)$ with $\text{SNR}_p > 1.0$ | `src/mechanisms/m1_packet.jl` |
-| **$m = 2$** | Single-Trial Motor Vigor | Latent burst amplitude scaling $c_e \sim \operatorname{Gamma}(\alpha_c, \alpha_c)$ | `src/mechanisms/m2_carrier.jl` |
-| **$m = 3$** | Motif Dictionary Prior | Reversible-Jump archetype birth/death with Two-Part MDL complexity tax | `src/mechanisms/m3_motif.jl` |
+| **$m = 0$** | Multi-Scale Background Floor | Baseline firing rate $\bar{\lambda}_{0,c}$ and continuous excitability floor | `src/scales/`, `m0_floor.jl` |
+| **$m = 1$** | Biophysical Spike Packets | Localized Gaussian packet archetypes $(a_p, \mu_p, \sigma_p^2)$ with $\text{SNR}_p > 1.0$ | `src/mechanisms/m1_packet.jl` |
+| **$m = 2$** | Sequence Carrier & Occurrences | Continuous onset discovery $\tau_e$, dynamic bounding envelopes $[\delta_L, \delta_R]$, and competitive occurrence life cycles | `src/mechanisms/m2_carrier.jl` |
+| **$m = 3$** | Motif Dictionary & Vigor Dynamics | Nonparametric birth/death ($M \to M \pm 1$), Two-Part MDL complexity tax, gauge symmetry, and motor vigor $c_e \sim \operatorname{Gamma}(\alpha_c, \alpha_c)$ | `src/mechanisms/m3_motif.jl` |
 | **$m = 4$** | Continuous Warping Manifold | Heavy-tailed Student-$t$ kinematics $\mathbf{u}_e$ with ARD precision pruning | `src/mechanisms/m4_manifold.jl` |
 | **$m = 5$** | Fully Coupled Continuous Engine | Dual-timescale OU network arousal $x_r(t)$ and cellular micro-drift $\delta x_c(t)$ | `src/mechanisms/m5_ou.jl` |
 
