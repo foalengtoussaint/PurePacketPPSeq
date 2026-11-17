@@ -1286,7 +1286,7 @@
         ctx.globalAlpha = 1.0;
       }
 
-      // DETERMINISTIC STRUCTURE-PRESERVING PIXEL OCCUPANCY SPIKE RENDERING
+      // ZERO-ALLOCATION HIGH-THROUGHPUT PIXEL-BUCKETED SPIKE RENDERER (60 FPS)
       if (state.spikes && state.spikes.t && state.spikes.t.length > 0) {
         const ts = state.spikes.t;
         const ranks = state.spikes.r;
@@ -1299,163 +1299,176 @@
         const channelRowH = h_spike / N_neural;
         const baseSpikeW = 1.5;
         const baseSpikeH = Math.max(1.8, Math.min(4.5, channelRowH * 1.2));
+        const fgSpikeW = cMode === "occurrence" ? 2.8 : (cMode === "motif" ? 2.2 : 1.8);
+        const fgSpikeH = cMode === "occurrence" ? Math.max(3.5, baseSpikeH * 1.5) : (cMode === "motif" ? Math.max(2.8, baseSpikeH * 1.3) : Math.max(2.2, baseSpikeH * 1.15));
 
-        // Constant global alphas: exact same alpha every time
         const ALPHA_FG  = 1.0;
-        const ALPHA_BG  = 0.20; // Constant muted alpha across all contrast modes
+        const ALPHA_BG  = 0.20;
         const ALPHA_OFF = 0.85;
 
-        // SINGLE UNIFIED CONTRAST RESOLUTION FUNCTION
-        function resolveSpikeContrast(evId, mId, isMop) {
-          const regColor = isMop ? "#58a6ff" : "#ff9b54";
-          const mutedRegColor = isMop ? "#4a6890" : "#805840";
+        const activeM = state.activeMotifId;
+        const selId = sel ? sel.id : -1;
+        const selColor = sel ? (sel.color || MOTIF_PALETTE[sel.motif]) : null;
 
-          if (cMode === "off") {
-            return {
-              color: regColor,
-              alpha: ALPHA_OFF,
-              isForeground: false,
-              w: baseSpikeW,
-              h: baseSpikeH,
-              glowCore: false
-            };
-          }
+        const plotWInt = Math.ceil(plotW);
+        const gridW = plotWInt + 2;
 
-          if (cMode === "foreground") {
-            if (mId > 0) {
-              return {
-                color: MOTIF_PALETTE[mId] || regColor,
-                alpha: ALPHA_FG,
-                isForeground: true,
-                w: 1.8,
-                h: Math.max(2.2, baseSpikeH * 1.15),
-                glowCore: false
-              };
-            }
-            return {
-              color: mutedRegColor,
-              alpha: ALPHA_BG,
-              isForeground: false,
-              w: baseSpikeW,
-              h: baseSpikeH,
-              glowCore: false
-            };
-          }
+        // Ensure persistent typed-array occupancy buffer (411 * 1600 bytes = 650 KB)
+        const totalGridCells = N_neural * gridW;
+        if (!window._spikeGrid || window._spikeGrid.length < totalGridCells) {
+          window._spikeGrid = new Uint8Array(totalGridCells);
+        }
+        const grid = window._spikeGrid;
+        grid.fill(0, 0, totalGridCells);
 
-          if (cMode === "motif") {
-            if (mId === state.activeMotifId) {
-              return {
-                color: MOTIF_PALETTE[mId] || regColor,
-                alpha: ALPHA_FG,
-                isForeground: true,
-                w: 2.2,
-                h: Math.max(2.8, baseSpikeH * 1.3),
-                glowCore: false
-              };
-            }
-            return {
-              color: mId === 0 ? mutedRegColor : regColor,
-              alpha: ALPHA_BG,
-              isForeground: false,
-              w: baseSpikeW,
-              h: baseSpikeH,
-              glowCore: false
-            };
-          }
+        // Pre-allocate coordinate collector arrays for ultra-fast batched drawing
+        if (!window._mopBgX || window._mopBgX.length < totalGridCells) {
+          window._mopBgX = new Float32Array(totalGridCells);
+          window._mopBgY = new Float32Array(totalGridCells);
+          window._cpBgX  = new Float32Array(totalGridCells);
+          window._cpBgY  = new Float32Array(totalGridCells);
+        }
+        let nBgMop = 0;
+        let nBgCp = 0;
 
-          if (cMode === "occurrence") {
-            if (sel && evId === sel.id) {
-              return {
-                color: sel.color || MOTIF_PALETTE[sel.motif] || regColor,
-                alpha: ALPHA_FG,
-                isForeground: true,
-                w: 2.8,
-                h: Math.max(3.5, baseSpikeH * 1.5),
-                glowCore: true
-              };
-            }
-            return {
-              color: regColor,
-              alpha: ALPHA_BG,
-              isForeground: false,
-              w: baseSpikeW,
-              h: baseSpikeH,
-              glowCore: false
-            };
-          }
-
-          return {
-            color: regColor,
-            alpha: ALPHA_OFF,
-            isForeground: false,
-            w: baseSpikeW,
-            h: baseSpikeH,
-            glowCore: false
-          };
+        // Collect foreground spikes by motif color for instant batched draw
+        if (!window._fgBatches) {
+          window._fgBatches = {};
+        }
+        const fgBatches = window._fgBatches;
+        for (let m in fgBatches) {
+          fgBatches[m].count = 0;
         }
 
-        const bgTracker = new PixelGridTracker(N_neural);
-        const fgTracker = new PixelGridTracker(N_neural);
-
-        // PASS 1: BACKGROUND / MUTED SPIKES (OR ALL SPIKES IF OFF)
+        // SINGLE HIGH-SPEED PASS OVER SPIKES IN VIEWPORT
         for (let i = idx0; i < idx1; i++) {
+          const t = ts[i];
+          if (t < t0 || t > t1) continue;
+
           const rank = ranks[i];
           if (rank >= N_neural) continue;
 
           const isMop = rank < divRank;
-          const isCp  = rank >= divRank && rank < N_neural;
+          const isCp  = !isMop;
           if (state.regionFilter === "MOp" && !isMop) continue;
           if (state.regionFilter === "CP" && !isCp) continue;
 
-          const t = ts[i];
-          if (t < t0 || t > t1) continue;
-
-          const style = resolveSpikeContrast(evs[i], ms[i], isMop);
-          if (style.isForeground) continue; // Drawn in Pass 2!
-
           const mappedRank = rankMap ? rankMap[rank] : rank;
-          const x = padL + ((t - t0) / tSpan) * plotW;
-          const pxCol = Math.round(x);
+          const pxCol = (padL + ((t - t0) / tSpan) * plotW) | 0;
+          const col = pxCol - padL;
+          if (col < 0 || col >= plotWInt) continue;
 
-          if (!bgTracker.testAndSet(mappedRank, pxCol)) continue;
+          const cellIdx = mappedRank * gridW + col;
+          const occ = grid[cellIdx];
+          if (occ === 2) continue; // Already saturated with foreground!
 
-          const y = padT_spike + (mappedRank / N_neural) * h_spike;
-          ctx.globalAlpha = style.alpha;
-          ctx.fillStyle = style.color;
-          ctx.fillRect(x - style.w / 2, y - style.h / 2, style.w, style.h);
+          const mId = ms[i];
+          const evId = evs[i];
+
+          let isFg = false;
+          let fgColor = null;
+
+          if (cMode === "foreground") {
+            if (mId > 0) {
+              isFg = true;
+              fgColor = MOTIF_PALETTE[mId] || (isMop ? "#58a6ff" : "#ff9b54");
+            }
+          } else if (cMode === "motif") {
+            if (mId === activeM) {
+              isFg = true;
+              fgColor = MOTIF_PALETTE[mId] || (isMop ? "#58a6ff" : "#ff9b54");
+            }
+          } else if (cMode === "occurrence") {
+            if (selId > 0 && evId === selId) {
+              isFg = true;
+              fgColor = selColor || (isMop ? "#58a6ff" : "#ff9b54");
+            }
+          }
+
+          const yCenter = padT_spike + (mappedRank / N_neural) * h_spike;
+
+          if (isFg) {
+            grid[cellIdx] = 2; // Mark as foreground-occupied
+            if (!fgBatches[fgColor]) {
+              fgBatches[fgColor] = {
+                count: 0,
+                x: new Float32Array(30000),
+                y: new Float32Array(30000),
+                mId: mId
+              };
+            }
+            const b = fgBatches[fgColor];
+            if (b.count < b.x.length) {
+              b.x[b.count] = pxCol;
+              b.y[b.count] = yCenter;
+              b.count++;
+            }
+          } else {
+            if (occ >= 1) continue; // Already has background drawn in this screen pixel!
+            grid[cellIdx] = 1;
+            if (isMop) {
+              window._mopBgX[nBgMop] = pxCol;
+              window._mopBgY[nBgMop] = yCenter;
+              nBgMop++;
+            } else {
+              window._cpBgX[nBgCp] = pxCol;
+              window._cpBgY[nBgCp] = yCenter;
+              nBgCp++;
+            }
+          }
         }
 
-        // PASS 2: FOREGROUND ATTRIBUTED SEQUENCE SPIKES (100% SIGNAL INTEGRITY)
+        // BATCHED HARDWARE-ACCELERATED DRAW CALLS (Only ~10-15 Canvas draw calls total!)
+        // 1. Draw MOp Background Batch
+        if (nBgMop > 0) {
+          ctx.globalAlpha = cMode === "off" ? ALPHA_OFF : ALPHA_BG;
+          ctx.fillStyle = cMode === "off" ? "#58a6ff" : "#4a6890";
+          ctx.beginPath();
+          const halfW = baseSpikeW * 0.5, halfH = baseSpikeH * 0.5;
+          const xs = window._mopBgX, ys = window._mopBgY;
+          for (let k = 0; k < nBgMop; k++) {
+            ctx.rect(xs[k] - halfW, ys[k] - halfH, baseSpikeW, baseSpikeH);
+          }
+          ctx.fill();
+        }
+
+        // 2. Draw CP Background Batch
+        if (nBgCp > 0) {
+          ctx.globalAlpha = cMode === "off" ? ALPHA_OFF : ALPHA_BG;
+          ctx.fillStyle = cMode === "off" ? "#ff9b54" : "#805840";
+          ctx.beginPath();
+          const halfW = baseSpikeW * 0.5, halfH = baseSpikeH * 0.5;
+          const xs = window._cpBgX, ys = window._cpBgY;
+          for (let k = 0; k < nBgCp; k++) {
+            ctx.rect(xs[k] - halfW, ys[k] - halfH, baseSpikeW, baseSpikeH);
+          }
+          ctx.fill();
+        }
+
+        // 3. Draw Foreground Batches (by Motif Color)
         if (cMode !== "off") {
-          for (let i = idx0; i < idx1; i++) {
-            const rank = ranks[i];
-            if (rank >= N_neural) continue;
+          ctx.globalAlpha = ALPHA_FG;
+          const halfW = fgSpikeW * 0.5, halfH = fgSpikeH * 0.5;
+          for (let color in fgBatches) {
+            const b = fgBatches[color];
+            if (b.count === 0) continue;
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            const xs = b.x, ys = b.y;
+            const cnt = b.count;
+            for (let k = 0; k < cnt; k++) {
+              ctx.rect(xs[k] - halfW, ys[k] - halfH, fgSpikeW, fgSpikeH);
+            }
+            ctx.fill();
 
-            const isMop = rank < divRank;
-            const isCp  = rank >= divRank && rank < N_neural;
-            if (state.regionFilter === "MOp" && !isMop) continue;
-            if (state.regionFilter === "CP" && isMop) continue;
-
-            const t = ts[i];
-            if (t < t0 || t > t1) continue;
-
-            const style = resolveSpikeContrast(evs[i], ms[i], isMop);
-            if (!style.isForeground) continue; // Already drawn in Pass 1!
-
-            const mappedRank = rankMap ? rankMap[rank] : rank;
-            const x = padL + ((t - t0) / tSpan) * plotW;
-            const pxCol = Math.round(x);
-
-            if (!fgTracker.testAndSet(mappedRank, pxCol)) continue;
-
-            const y = padT_spike + (mappedRank / N_neural) * h_spike;
-            ctx.globalAlpha = style.alpha;
-            ctx.fillStyle = style.color;
-            ctx.fillRect(x - style.w / 2, y - style.h / 2, style.w, style.h);
-
-            if (style.glowCore) {
+            // Glow core for selected occurrence
+            if (cMode === "occurrence") {
               ctx.fillStyle = "#ffffff";
-              ctx.fillRect(x - 0.5, y - style.h / 2, 1.0, style.h);
+              ctx.beginPath();
+              for (let k = 0; k < cnt; k++) {
+                ctx.rect(xs[k] - 0.5, ys[k] - halfH, 1.0, fgSpikeH);
+              }
+              ctx.fill();
             }
           }
         }
