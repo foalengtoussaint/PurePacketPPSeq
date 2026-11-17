@@ -7,3 +7,5 @@
 *.pyc
 __pycache__/
 modularize.py
+# Exceeds GitHub 100MB file size limit
+runs/lgcy0288_actual_full_session_100sweeps/spikes.json
