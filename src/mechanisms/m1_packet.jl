@@ -209,6 +209,7 @@ function sample_packet_masses!(
     beta_a::Float64=1.0,
     bg_rates::Union{Nothing, Vector{Float64}}=nothing,
     ou_ctx::Union{Nothing, ContinuousOUContext}=nothing,
+    channels::Union{Nothing, AbstractVector{Int}}=nothing,
     rng::AbstractRNG=Random.default_rng()
 )
     P = length(m.packets)
@@ -221,6 +222,9 @@ function sample_packet_masses!(
     for p in 1:P
         pkt = m.packets[p]
         chan = pkt.channel
+        if channels !== nothing && !(chan in channels)
+            continue
+        end
         lam0 = compute_effective_bg_rate(chan, pkt.mu, occurrences, bg_rates, ou_ctx)
         sig_p = sqrt(max(pkt.var, 1e-8))
         a_min = (lam0 > 0.0) ? (sqrt(2π) * sig_p * lam0) : 0.0
@@ -250,27 +254,19 @@ function update_packet_corridors!(
     anchor_origin::Bool=true,
     damp::Float64=0.2,
     nu_0::Float64=10.0,
-    S_0::Float64=0.00025
+    S_0::Float64=0.00025,
+    channels::Union{Nothing, AbstractVector{Int}}=nothing
 )
     P = length(m.packets)
     P == 0 && return 0.0
     E = length(occurrences)
 
-    k1 = 0; k2 = 0; k3 = 0; k4 = 0
-    K = 0
-    for r in 1:length(active_mask)
-        if active_mask[r]
-            K += 1
-            if K == 1; k1 = r
-            elseif K == 2; k2 = r
-            elseif K == 3; k3 = r
-            elseif K == 4; k4 = r
-            end
-        end
-    end
-
     for p in 1:P
         pkt = m.packets[p]
+        chan = pkt.channel
+        if channels !== nothing && !(chan in channels)
+            continue
+        end
         tot_c = 0
         weighted_delta = 0.0
         sum_sq_err = 0.0
@@ -280,10 +276,10 @@ function update_packet_corridors!(
             c == 0 && continue
             u = occ.u
             pred_s = 0.0
-            if K == 1; pred_s = m.W[k1, p] * u[k1]
-            elseif K == 2; pred_s = m.W[k1, p] * u[k1] + m.W[k2, p] * u[k2]
-            elseif K == 3; pred_s = m.W[k1, p] * u[k1] + m.W[k2, p] * u[k2] + m.W[k3, p] * u[k3]
-            elseif K == 4; pred_s = m.W[k1, p] * u[k1] + m.W[k2, p] * u[k2] + m.W[k3, p] * u[k3] + m.W[k4, p] * u[k4]
+            for r in 1:min(length(active_mask), length(u), size(m.W, 1))
+                if active_mask[r]
+                    pred_s += m.W[r, p] * u[r]
+                end
             end
             mean_t = occ.sum_t[p] / c
             target_t = occ.tau + pkt.mu + pred_s
@@ -302,7 +298,7 @@ function update_packet_corridors!(
     end
 
     origin_offset = 0.0
-    if anchor_origin && P > 0
+    if anchor_origin && P > 0 && channels === nothing
         origin_offset = m.packets[1].mu
         if origin_offset != 0.0
             for p in 1:P
@@ -359,23 +355,29 @@ function prune_dead_packets!(
     alpha_a::Float64=1.0,
     beta_a::Float64=1.0,
     counts_bg::Union{Nothing, Vector{Int}}=nothing,
+    channels::Union{Nothing, AbstractVector{Int}}=nothing,
+    delta_reach_kw::Union{Nothing, Float64}=nothing,
     rng::AbstractRNG=Random.default_rng(),
     occam_tax::Float64=2.0
 )::Vector{Int}
     P = length(m.packets)
-    P <= 2 && return Int[]
+    (channels === nothing && P <= 2) && return Int[]
     E_m = length(occurrences)
     E_eff = max(sum(occ.amplitude for occ in occurrences; init=0.0), 1.0)
     var_prior = sigma_prior^2
+    N_ch_eff = (channels === nothing) ? N_channels : length(channels)
 
     dead_packets = Int[]
 
     for p in 1:P
-        if P - length(dead_packets) <= 2
+        if channels === nothing && P - length(dead_packets) <= 2
             break
         end
         pkt = m.packets[p]
         chan = pkt.channel
+        if channels !== nothing && !(chan in channels)
+            continue
+        end
         survivors_tentative = [q for q in 1:P if q != p]
         isempty(survivors_tentative) && continue
 
@@ -393,7 +395,7 @@ function prune_dead_packets!(
         # 2. Single-Step Reversibility Guard:
         # If mu_p is outside surv_left..surv_right enlarged by search reach delta_reach,
         # a single birth proposal on the survivors could never reach mu_p.
-        delta_reach = max(3.0 * sigma_prior, 0.25)
+        delta_reach = (delta_reach_kw !== nothing) ? delta_reach_kw : max(3.0 * sigma_prior, 0.25)
         search_left = surv_left - delta_reach
         search_right = surv_right + delta_reach
         is_extremal = (pkt.mu < min_surv_mu) || (pkt.mu > max_surv_mu)
@@ -421,7 +423,7 @@ function prune_dead_packets!(
         if proposal_support_curr > proposal_support && proposal_support > 0.0
             tax_contraction = Float64(P - 1) * log(proposal_support_curr / proposal_support)
         end
-        tax_chan = compute_channel_tax_death(chan, m.chan_to_packets, P, N_channels, proposal_support; sigma_prior=sigma_prior)
+        tax_chan = compute_channel_tax_death(chan, m.chan_to_packets, P, N_ch_eff, proposal_support; sigma_prior=sigma_prior)
         tax_occam = log(proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_chan + tax_contraction
 
         # 4. Evaluate Gamma-Marginalized Log-Evidence Delta ln M_p
@@ -446,13 +448,14 @@ function prune_dead_packets!(
                 end
                 t_pred = occ.tau + pkt.mu + pred_s
                 for s_idx in occ.members
-                    if assign[s_idx].packet_idx == p
-                        dt = spike_t[s_idx] - t_pred
-                        w = exp(-0.5 * (dt * dt) / var_prior)
-                        sum_w += w
-                        push!(cand_dt, dt)
-                        push!(cand_spk, s_idx)
-                    end
+                    (s_idx < 1 || s_idx > length(assign)) && continue
+                    as = assign[s_idx]
+                    (as.packet_idx == p && as.event_id == occ.id) || continue
+                    dt = spike_t[s_idx] - t_pred
+                    w = exp(-0.5 * (dt * dt) / var_prior)
+                    sum_w += w
+                    push!(cand_dt, dt)
+                    push!(cand_spk, s_idx)
                 end
             end
 
@@ -476,7 +479,7 @@ function prune_dead_packets!(
             a_min = sqrt(2π) * sigma_prior * lam0
             if a_min > 0.0
                 ln_Z0 = logccdf(Gamma(alpha_a, 1.0 / beta_a), a_min)
-                ln_Zpost = logccdf(Gamma(alpha_a + sum_w, 1.0 / (beta_a + E_eff)), a_min)
+                ln_Zpost = logccdf(Gamma(max(alpha_a + sum_w, 1e-4), 1.0 / (beta_a + E_eff)), a_min)
                 llr_p += (ln_Zpost - ln_Z0)
             end
         else
@@ -490,7 +493,7 @@ function prune_dead_packets!(
             llr_p -= E_eff * a_post
             if a_min > 0.0
                 ln_Z0 = logccdf(Gamma(alpha_a, 1.0 / beta_a), a_min)
-                ln_Zpost = logccdf(Gamma(alpha_a + Float64(c_tot), 1.0 / (beta_a + E_eff)), a_min)
+                ln_Zpost = logccdf(Gamma(max(alpha_a + Float64(c_tot), 1e-4), 1.0 / (beta_a + E_eff)), a_min)
                 llr_p += (ln_Zpost - ln_Z0)
             end
             # Enforce SNR <= 1.0 or c_tot == 0 in fallback mode when occam_tax was explicitly passed
@@ -634,7 +637,9 @@ function detect_and_birth_or_split_packets!(
     active_mask::Union{Nothing, BitVector}=nothing,
     ard_alphas::Union{Nothing, Vector{Float64}}=nothing,
     tau_refractory::Float64=0.003,
-    allow_multi_packets::Bool=true
+    allow_multi_packets::Bool=true,
+    channels::Union{Nothing, AbstractVector{Int}}=nothing,
+    delta_reach_kw::Union{Nothing, Float64}=nothing
 )
     E_m = length(occurrences)
     E_m < 2 && return false
@@ -654,13 +659,15 @@ function detect_and_birth_or_split_packets!(
         end
     end
 
-    delta_reach = max(3.0 * sigma_prior, 0.25)
+    delta_reach = (delta_reach_kw !== nothing) ? delta_reach_kw : max(3.0 * sigma_prior, 0.25)
+    scan_channels = (channels === nothing) ? (1:N_channels) : channels
+    N_ch_eff = (channels === nothing) ? N_channels : length(channels)
     env_left = isempty(m.packets) ? m.delta_left : minimum(m.packets[q].mu - 4.0 * sqrt(m.packets[q].var) for q in 1:length(m.packets))
     env_right = isempty(m.packets) ? m.delta_right : maximum(m.packets[q].mu + 4.0 * sqrt(m.packets[q].var) for q in 1:length(m.packets))
     proposal_support = max(env_right - env_left, 6.0 * sigma_prior)
     s_left = env_left - delta_reach
     s_right = env_right + delta_reach
-    tax_chan = log(Float64(max(1, N_channels)))
+    tax_chan = log(Float64(max(1, N_ch_eff)))
 
     # 1. Bimodal Packet Split (Evaluated on Assigned Spikes S_p)
     if allow_multi_packets && !isempty(m.packets)
@@ -668,6 +675,9 @@ function detect_and_birth_or_split_packets!(
         for p in 1:P_curr
             pkt = m.packets[p]
             chan = pkt.channel
+            if channels !== nothing && !(chan in channels)
+                continue
+            end
             sig_p = sqrt(pkt.var)
             split_cand_times = Float64[]
             split_spk_indices = Int[]
@@ -686,7 +696,7 @@ function detect_and_birth_or_split_packets!(
                 pred_t = occ.tau + pkt.mu + pred_s
                 for spk_idx in occ.members
                     as = assign[spk_idx]
-                    if as.packet_idx == p
+                    if as.packet_idx == p && as.event_id == occ.id
                         dt = abs(spike_t[spk_idx] - pred_t)
                         if dt > 1.5 * sig_p
                             push!(split_cand_times, spike_t[spk_idx] - (occ.tau + pred_s))
@@ -703,7 +713,7 @@ function detect_and_birth_or_split_packets!(
                 spk_sorted = split_spk_indices[sort_idx]
 
                 split_span = max(cand_sorted[end] - cand_sorted[1], 4.0 * sigma_prior)
-                tax_chan_split = compute_channel_tax_birth(chan, m.chan_to_packets, length(m.packets), N_channels, proposal_support; sigma_prior=sigma_prior)
+                tax_chan_split = compute_channel_tax_birth(chan, m.chan_to_packets, length(m.packets), N_ch_eff, proposal_support; sigma_prior=sigma_prior)
                 isinf(tax_chan_split) && continue
                 occam_split = log(split_span / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_chan_split
 
@@ -804,7 +814,7 @@ function detect_and_birth_or_split_packets!(
                     new_env_right = max(env_right, mu_refined + 4.0 * sigma_prior)
                     new_proposal_support = max(new_env_right - new_env_left, 6.0 * sigma_prior)
                     tax_dilation = 0.0
-                    if new_proposal_support > proposal_support && proposal_support > 0.0
+                    if channels === nothing && new_proposal_support > proposal_support && proposal_support > 0.0
                         tax_dilation = Float64(P_curr) * log(new_proposal_support / proposal_support)
                     end
                     if best_split_llr <= occam_split + tax_dilation
@@ -831,13 +841,17 @@ function detect_and_birth_or_split_packets!(
                     end
 
                     for s_idx in split_spk_indices
-                        old_p = assign[s_idx].packet_idx
-                        eid = assign[s_idx].event_id
+                        as = assign[s_idx]
+                        eid = as.event_id
+                        !haskey(occ_dict, eid) && continue
+                        old_p = as.packet_idx
                         occ = occ_dict[eid]
                         t_s = spike_t[s_idx]
-                        occ.counts[old_p] -= 1
-                        occ.sum_t[old_p] -= t_s
-                        occ.sum_t2[old_p] -= t_s * t_s
+                        if old_p > 0 && old_p <= length(occ.counts)
+                            occ.counts[old_p] -= 1
+                            occ.sum_t[old_p] -= t_s
+                            occ.sum_t2[old_p] -= t_s * t_s
+                        end
                         assign[s_idx] = SpikeAssignment(eid, P_new)
                         occ.counts[P_new] += 1
                         occ.sum_t[P_new] += t_s
@@ -875,7 +889,7 @@ function detect_and_birth_or_split_packets!(
     best_cands = Vector{CandidateBirth}(undef, N_channels)
 
     # Step 1: Thread-parallel candidate identification across all channels (Read-only)
-    Threads.@threads for chan in 1:N_channels
+    Threads.@threads for chan in scan_channels
         tid = Threads.threadid()
         cand_times_buf = tl_cand_times[tid]
         cand_spks_buf = tl_cand_spks[tid]
@@ -923,7 +937,7 @@ function detect_and_birth_or_split_packets!(
         end
         existing_packets = m.chan_to_packets[chan]
 
-        tax_chan = compute_channel_tax_birth(chan, m.chan_to_packets, length(m.packets), N_channels, proposal_support; sigma_prior=sigma_prior)
+        tax_chan = compute_channel_tax_birth(chan, m.chan_to_packets, length(m.packets), N_ch_eff, proposal_support; sigma_prior=sigma_prior)
         if isinf(tax_chan)
             best_cands[chan] = CandidateBirth(false, chan, -Inf, 0.0, Inf)
             continue
@@ -1065,7 +1079,7 @@ function detect_and_birth_or_split_packets!(
     end
 
     # Step 2: Sequential main-thread acceptance, Occam re-check, and motif mutation
-    for chan in 1:N_channels
+    for chan in scan_channels
         cand = best_cands[chan]
         !cand.valid && continue
 
@@ -1089,12 +1103,12 @@ function detect_and_birth_or_split_packets!(
         new_env_left = min(env_left, cand.mu_refined - 4.0 * sigma_prior)
         new_env_right = max(env_right, cand.mu_refined + 4.0 * sigma_prior)
         new_proposal_support = max(new_env_right - new_env_left, 6.0 * sigma_prior)
-        tax_chan_live = compute_channel_tax_birth(chan, m.chan_to_packets, length(m.packets), N_channels, new_proposal_support; sigma_prior=sigma_prior)
+        tax_chan_live = compute_channel_tax_birth(chan, m.chan_to_packets, length(m.packets), N_ch_eff, new_proposal_support; sigma_prior=sigma_prior)
         isinf(tax_chan_live) && continue
 
         tax_dilation = 0.0
         P_curr = length(m.packets)
-        if new_proposal_support > proposal_support && proposal_support > 0.0
+        if channels === nothing && new_proposal_support > proposal_support && proposal_support > 0.0
             tax_dilation = Float64(P_curr) * log(new_proposal_support / proposal_support)
         end
         occam_birth_actual = log(new_proposal_support / (sqrt(2π) * sigma_prior)) + log(beta_a + E_m) + tax_loadings + tax_chan_live + tax_dilation

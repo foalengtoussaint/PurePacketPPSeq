@@ -7,5 +7,11 @@
 
 ## 2. Interaction & Output Integrity
 - **Immediate Conversational Feedback & Prior Alignment:** When the user asks or tells you something, always reply directly in chat first—even if you do not yet have the full answer on hand—before going off to run tools or investigate. Never run tools silently in response to a user query. Furthermore, if you encounter an unexpected problem, test failure, or behavior you are not 100% sure about, you must STOP immediately, assess the root cause, and answer/consult the user before executing fixes or going off to do things on your own.
+- **Conversational Boundaries & Focused Execution:** Do not emit continuous conversational dialogue or play-by-play commentary in the middle of executing a multi-step task. Deliver chat feedback strictly at task boundaries (at the start to confirm direction and outline the plan, and at the end to report complete results/metrics), as well as immediately whenever the user intervenes or an unexpected failure/decision requires alignment.
 - **No Unprompted Markdown Artifacts (.md):** Do not generate or edit markdown report artifacts (`.md` files) in the artifact directory unless explicitly requested by the user. Deliver all math, explanations, code snippets, and benchmark tables directly in chat.
 - **Markdown Table Formatting:** Ensure all markdown tables have strict column alignment and matching divider counts, avoiding unescaped pipe `|` characters inside LaTeX math or text cells.
+
+## 3. Architectural Boundary & Modularity
+- **Core Engine vs. Script Separation:** The core model package (`src/`) must remain strictly mathematical, domain-agnostic, and unpolluted by experiment-specific task logic (e.g., behavioral event types, poke channels, task phases).
+- **Generalized Primitives in Core:** You may add as many generalized mathematical primitives, helper functions, and parameterized arguments (e.g., channel masking/subsetting, generic proposal reaches) in `src/` as needed, but the core must never hardcode task-specific data schemas or specialized experiment loops.
+- **Experimental Workflows in Scripts:** All task-specific experiment orchestration, specific dataset loading/wiring, and specialized fitting workflows must live outside the core in `scripts/`, driving the model by invoking the core library's primitives.

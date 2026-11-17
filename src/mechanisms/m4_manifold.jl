@@ -56,6 +56,7 @@ function sample_packet_loadings!(
     occ_u::Vector{Vector{Float64}},
     residuals::Vector{Vector{Float64}},
     precisions::Vector{Vector{Float64}};
+    channels::Union{Nothing, AbstractVector{Int}}=nothing,
     rng::AbstractRNG=Random.default_rng()
 )
     P = length(m.packets)
@@ -74,6 +75,10 @@ function sample_packet_loadings!(
     K == 0 && return
 
     @inbounds for p in 1:P
+        pkt = m.packets[p]
+        if channels !== nothing && !(pkt.channel in channels)
+            continue
+        end
         if K == 1
             k1 = ws.act[1]
             a11 = state_alpha[k1]
@@ -148,7 +153,9 @@ function sample_packet_loadings!(
         end
     end
 
-    project_translational_gauge!(m, active_mask)
+    if channels === nothing
+        project_translational_gauge!(m, active_mask)
+    end
     update_motif_bounds!(m)
 end
 

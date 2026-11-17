@@ -4,6 +4,8 @@
 using PurePacketPPSeq
 using Serialization, Statistics, Printf, SpecialFunctions
 
+using DelimitedFiles
+
 ck_path = joinpath(@__DIR__, "checkpoint_pure_packet_cold_start_100sweeps.jls")
 raw = open(ck_path, "r") do io
     deserialize(io)
@@ -11,9 +13,15 @@ end
 
 println("Loaded Checkpoint: $(length(raw.motifs)) Motifs, $(length(raw.occurrences)) Occurrences.")
 
-# Channel split: MOp: 1:208, CP: 209:411
-is_mop(c) = 1 <= c <= 208
-is_cp(c)  = 209 <= c <= 411
+# Load exact ground-truth unit regional mapping from units.csv:
+# MOp: channels 1:98 and 302:411 (208 units total)
+# CP:  channels 99:301 (203 units total)
+units_path = "/home/foaleng/Downloads/mop_awake_ppseq/custom_sampler/results/top4_task_20261008/data/lgcy0288__20230519_114115__ephys/units.csv"
+units_raw, _ = readdlm(units_path, ',', header=true)
+unit_regions = String.(units_raw[:, 3])
+
+is_mop(c) = (1 <= c <= 411) && occursin("MOp", unit_regions[c])
+is_cp(c)  = (1 <= c <= 411) && occursin("CP", unit_regions[c])
 
 println("="^110)
 @printf("%-6s | %-5s | %-12s | %-12s | %-10s | %-10s | %-12s | %-10s | %-8s\n",
