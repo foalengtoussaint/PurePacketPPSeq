@@ -1262,28 +1262,122 @@
 
         const isCloseZoom = tSpan < 2.5;
         const isMediumZoom = tSpan < 15.0;
-        const spikeW = isCloseZoom ? 2.5 : (isMediumZoom ? 1.8 : 1.2);
-        const spikeH = isCloseZoom ? 4.8 : (isMediumZoom ? 3.4 : 2.2);
+        const baseSpikeW = isCloseZoom ? 2.5 : (isMediumZoom ? 1.8 : 1.2);
+        const baseSpikeH = isCloseZoom ? 4.8 : (isMediumZoom ? 3.4 : 2.2);
 
-        // Deterministic pixel occupancy: Only 1 draw call per unit per pixel column!
-        // Guarantees bursts and sequences maintain 100% density without arbitrary skipping!
+        // Constant global alphas: exact same alpha every time
+        const ALPHA_FG  = 1.0;
+        const ALPHA_BG  = 0.20; // Constant muted alpha across all contrast modes
+        const ALPHA_OFF = isCloseZoom ? 0.95 : 0.85;
+
+        // SINGLE UNIFIED CONTRAST RESOLUTION FUNCTION
+        function resolveSpikeContrast(evId, mId, isMop) {
+          const regColor = isMop ? "#58a6ff" : "#ff9b54";
+          const mutedRegColor = isMop ? "#4a6890" : "#805840";
+
+          if (cMode === "off") {
+            return {
+              color: regColor,
+              alpha: ALPHA_OFF,
+              isForeground: false,
+              w: baseSpikeW,
+              h: baseSpikeH,
+              glowCore: false
+            };
+          }
+
+          if (cMode === "foreground") {
+            if (mId > 0) {
+              return {
+                color: MOTIF_PALETTE[mId] || regColor,
+                alpha: ALPHA_FG,
+                isForeground: true,
+                w: baseSpikeW,
+                h: baseSpikeH,
+                glowCore: false
+              };
+            }
+            return {
+              color: mutedRegColor,
+              alpha: ALPHA_BG,
+              isForeground: false,
+              w: baseSpikeW,
+              h: baseSpikeH,
+              glowCore: false
+            };
+          }
+
+          if (cMode === "motif") {
+            if (mId === state.activeMotifId) {
+              return {
+                color: MOTIF_PALETTE[mId] || regColor,
+                alpha: ALPHA_FG,
+                isForeground: true,
+                w: Math.max(2.2, baseSpikeW + 0.8),
+                h: Math.max(3.8, baseSpikeH + 1.2),
+                glowCore: isCloseZoom
+              };
+            }
+            return {
+              color: mId === 0 ? mutedRegColor : regColor,
+              alpha: ALPHA_BG,
+              isForeground: false,
+              w: baseSpikeW,
+              h: baseSpikeH,
+              glowCore: false
+            };
+          }
+
+          if (cMode === "occurrence") {
+            if (sel && evId === sel.id) {
+              return {
+                color: sel.color || MOTIF_PALETTE[sel.motif] || regColor,
+                alpha: ALPHA_FG,
+                isForeground: true,
+                w: Math.max(2.8, baseSpikeW + 1.2),
+                h: Math.max(4.5, baseSpikeH + 1.8),
+                glowCore: isCloseZoom
+              };
+            }
+            return {
+              color: regColor,
+              alpha: ALPHA_BG,
+              isForeground: false,
+              w: baseSpikeW,
+              h: baseSpikeH,
+              glowCore: false
+            };
+          }
+
+          return {
+            color: regColor,
+            alpha: ALPHA_OFF,
+            isForeground: false,
+            w: baseSpikeW,
+            h: baseSpikeH,
+            glowCore: false
+          };
+        }
+
         const usePixelOccupancy = tSpan > 45.0;
         const lastBgX = new Int32Array(N_neural).fill(-1000);
         const lastFgX = new Int32Array(N_neural).fill(-1000);
 
-        // PASS 1: BACKGROUND / NON-PRIORITIZED SPIKES
+        // PASS 1: BACKGROUND / MUTED SPIKES (OR ALL SPIKES IF OFF)
         for (let i = idx0; i < idx1; i++) {
           const rank = ranks[i];
           if (rank >= N_neural) continue;
 
           const isMop = rank < divRank;
           const isCp  = rank >= divRank && rank < N_neural;
-
           if (state.regionFilter === "MOp" && !isMop) continue;
           if (state.regionFilter === "CP" && !isCp) continue;
 
           const t = ts[i];
           if (t < t0 || t > t1) continue;
+
+          const style = resolveSpikeContrast(evs[i], ms[i], isMop);
+          if (style.isForeground) continue; // Drawn in Pass 2!
 
           const mappedRank = rankMap ? rankMap[rank] : rank;
           const x = padL + ((t - t0) / tSpan) * plotW;
@@ -1295,137 +1389,45 @@
           }
 
           const y = padT_spike + (mappedRank / N_neural) * h_spike;
-          const evId = evs[i];
-          const mId  = ms[i];
-
-          if (cMode === "occurrence" && sel) {
-            if (evId !== sel.id) {
-              // Visible muted background context (never completely blacked out!)
-              ctx.globalAlpha = 0.18;
-              ctx.fillStyle = isMop ? "#58a6ff" : "#ff9b54";
-              ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
-            }
-          } else if (cMode === "motif") {
-            if (mId !== state.activeMotifId) {
-              // Visible muted background context (distinguishing Poisson vs other motifs)
-              if (mId === 0) {
-                ctx.globalAlpha = 0.18;
-                ctx.fillStyle = isMop ? "#4a6890" : "#805840";
-              } else {
-                ctx.globalAlpha = 0.22;
-                ctx.fillStyle = isMop ? "#58a6ff" : "#ff9b54";
-              }
-              ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
-            }
-          } else if (cMode === "foreground") {
-            if (mId === 0) {
-              // Poisson background noise: Distinct, readable muted tone (never 0.04 blacked out!)
-              ctx.globalAlpha = 0.25;
-              ctx.fillStyle = isMop ? "#4a6890" : "#805840";
-              ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
-            }
-          } else {
-            // Level 0: No contrast / Uniform raw spikes (100% visible MOp/CP)
-            ctx.globalAlpha = isCloseZoom ? 0.95 : 0.85;
-            ctx.fillStyle = isMop ? "#58a6ff" : "#ff9b54";
-            ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
-          }
+          ctx.globalAlpha = style.alpha;
+          ctx.fillStyle = style.color;
+          ctx.fillRect(x - style.w / 2, y - style.h / 2, style.w, style.h);
         }
 
         // PASS 2: FOREGROUND ATTRIBUTED SEQUENCE SPIKES (100% SIGNAL INTEGRITY)
-        if (cMode === "occurrence" && sel) {
-          const aSpikeW = Math.max(2.8, spikeW + 1.2);
-          const aSpikeH = Math.max(4.5, spikeH + 1.8);
-          const mColor = MOTIF_PALETTE[sel.motif] || "#58a6ff";
-
+        if (cMode !== "off") {
           for (let i = idx0; i < idx1; i++) {
-            if (evs[i] === sel.id) {
-              const rank = ranks[i];
-              if (rank >= N_neural) continue;
+            const rank = ranks[i];
+            if (rank >= N_neural) continue;
 
-              const isMop = rank < divRank;
-              if (state.regionFilter === "MOp" && !isMop) continue;
-              if (state.regionFilter === "CP" && isMop) continue;
+            const isMop = rank < divRank;
+            const isCp  = rank >= divRank && rank < N_neural;
+            if (state.regionFilter === "MOp" && !isMop) continue;
+            if (state.regionFilter === "CP" && isMop) continue;
 
-              const mappedRank = rankMap ? rankMap[rank] : rank;
-              const t = ts[i];
-              const ax = padL + ((t - t0) / tSpan) * plotW;
-              const ay = padT_spike + (mappedRank / N_neural) * h_spike;
+            const t = ts[i];
+            if (t < t0 || t > t1) continue;
 
-              ctx.globalAlpha = 1.0;
-              ctx.fillStyle = mColor;
-              ctx.fillRect(ax - aSpikeW / 2, ay - aSpikeH / 2, aSpikeW, aSpikeH);
+            const style = resolveSpikeContrast(evs[i], ms[i], isMop);
+            if (!style.isForeground) continue; // Already drawn in Pass 1!
 
-              if (isCloseZoom) {
-                ctx.fillStyle = "#ffffff";
-                ctx.fillRect(ax - 0.5, ay - aSpikeH / 2, 1.0, aSpikeH);
-              }
+            const mappedRank = rankMap ? rankMap[rank] : rank;
+            const x = padL + ((t - t0) / tSpan) * plotW;
+            const pxCol = Math.round(x);
+
+            if (usePixelOccupancy) {
+              if (lastFgX[mappedRank] === pxCol) continue;
+              lastFgX[mappedRank] = pxCol;
             }
-          }
-        } else if (cMode === "motif") {
-          // Active Motif Spikes: Always 100% rendered with zero downsampling in vivid color!
-          const aSpikeW = Math.max(2.2, spikeW + 0.8);
-          const aSpikeH = Math.max(3.8, spikeH + 1.2);
-          const mColor = MOTIF_PALETTE[state.activeMotifId] || "#58a6ff";
 
-          for (let i = idx0; i < idx1; i++) {
-            if (ms[i] === state.activeMotifId) {
-              const rank = ranks[i];
-              if (rank >= N_neural) continue;
+            const y = padT_spike + (mappedRank / N_neural) * h_spike;
+            ctx.globalAlpha = style.alpha;
+            ctx.fillStyle = style.color;
+            ctx.fillRect(x - style.w / 2, y - style.h / 2, style.w, style.h);
 
-              const isMop = rank < divRank;
-              if (state.regionFilter === "MOp" && !isMop) continue;
-              if (state.regionFilter === "CP" && isMop) continue;
-
-              const mappedRank = rankMap ? rankMap[rank] : rank;
-              const t = ts[i];
-              const ax = padL + ((t - t0) / tSpan) * plotW;
-              const pxCol = Math.round(ax);
-
-              if (usePixelOccupancy) {
-                if (lastFgX[mappedRank] === pxCol) continue;
-                lastFgX[mappedRank] = pxCol;
-              }
-
-              const ay = padT_spike + (mappedRank / N_neural) * h_spike;
-
-              ctx.globalAlpha = 1.0;
-              ctx.fillStyle = mColor;
-              ctx.fillRect(ax - aSpikeW / 2, ay - aSpikeH / 2, aSpikeW, aSpikeH);
-
-              if (isCloseZoom) {
-                ctx.fillStyle = "#ffffff";
-                ctx.fillRect(ax - 0.5, ay - aSpikeH / 2, 1.0, aSpikeH);
-              }
-            }
-          }
-        } else if (cMode === "foreground") {
-          // Foreground: Full-fidelity sequence wavefronts across all motifs!
-          for (let i = idx0; i < idx1; i++) {
-            const mId = ms[i];
-            if (mId > 0) {
-              const rank = ranks[i];
-              if (rank >= N_neural) continue;
-
-              const isMop = rank < divRank;
-              if (state.regionFilter === "MOp" && !isMop) continue;
-              if (state.regionFilter === "CP" && isMop) continue;
-
-              const mappedRank = rankMap ? rankMap[rank] : rank;
-              const t = ts[i];
-              const ax = padL + ((t - t0) / tSpan) * plotW;
-              const pxCol = Math.round(ax);
-
-              if (usePixelOccupancy) {
-                if (lastFgX[mappedRank] === pxCol) continue;
-                lastFgX[mappedRank] = pxCol;
-              }
-
-              const ay = padT_spike + (mappedRank / N_neural) * h_spike;
-
-              ctx.globalAlpha = 0.95;
-              ctx.fillStyle = MOTIF_PALETTE[mId] || "#58a6ff";
-              ctx.fillRect(ax - spikeW / 2, ay - spikeH / 2, spikeW, spikeH);
+            if (style.glowCore) {
+              ctx.fillStyle = "#ffffff";
+              ctx.fillRect(x - 0.5, y - style.h / 2, 1.0, style.h);
             }
           }
         }
