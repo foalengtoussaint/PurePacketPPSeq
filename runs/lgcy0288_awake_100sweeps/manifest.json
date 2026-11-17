@@ -10468,6 +10468,6 @@
     }
   },
   "run_id": "lgcy0288_awake_100sweeps",
-  "run_name": "Session lgcy0288 · Cold-Start 100 Sweeps (411 Units, 20 Motifs)",
+  "run_name": "Session lgcy0288 · Full-Session 100 Sweeps (411 Units, 20 Motifs)",
   "session": "lgcy0288__20230519_114115__ephys"
 }

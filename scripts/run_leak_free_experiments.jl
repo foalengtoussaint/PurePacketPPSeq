@@ -446,3 +446,29 @@ results = Dict(
 
 serialize("/home/foaleng/Documents/PurePacketPPSeq/scripts/leak_free_validation_results.jls", results)
 println("All results saved to /home/foaleng/Documents/PurePacketPPSeq/scripts/leak_free_validation_results.jls")
+
+# Save modern leak-free model checkpoints for Model Explorer
+println("\nSaving modern leak-free model checkpoints...")
+serialize("/home/foaleng/Documents/PurePacketPPSeq/scripts/checkpoint_leak_free_model_a_mop.jls", (
+    motifs=model_a.motifs, occurrences=model_a.occurrences, assign=model_a.assign,
+    bg_rates=model_a.bg_rates, ard_state=model_a.ard_state, ou_ctx=ou_full
+))
+println("✓ Saved Model A: /home/foaleng/Documents/PurePacketPPSeq/scripts/checkpoint_leak_free_model_a_mop.jls")
+
+serialize("/home/foaleng/Documents/PurePacketPPSeq/scripts/checkpoint_leak_free_model_b_cp.jls", (
+    motifs=model_b.motifs, occurrences=model_b.occurrences, assign=model_b.assign,
+    bg_rates=model_b.bg_rates, ard_state=model_b.ard_state, ou_ctx=ou_full
+))
+println("✓ Saved Model B: /home/foaleng/Documents/PurePacketPPSeq/scripts/checkpoint_leak_free_model_b_cp.jls")
+
+serialize("/home/foaleng/Documents/PurePacketPPSeq/scripts/checkpoint_leak_free_model_c_joint.jls", (
+    motifs=model_c.motifs, occurrences=model_c.occurrences, assign=model_c.assign,
+    bg_rates=model_c.bg_rates, ard_state=model_c.ard_state, ou_ctx=ou_full
+))
+println("✓ Saved Model C: /home/foaleng/Documents/PurePacketPPSeq/scripts/checkpoint_leak_free_model_c_joint.jls")
+
+serialize("/home/foaleng/Documents/PurePacketPPSeq/scripts/checkpoint_leak_free_model_c_test.jls", (
+    motifs=model_c.motifs, occurrences=model_c_test.occurrences, assign=model_c_test.assign,
+    bg_rates=model_c.bg_rates, ard_state=model_c.ard_state, ou_ctx=ou_full
+))
+println("✓ Saved Model C Test: /home/foaleng/Documents/PurePacketPPSeq/scripts/checkpoint_leak_free_model_c_test.jls")

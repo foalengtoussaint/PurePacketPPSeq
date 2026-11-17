@@ -7,12 +7,24 @@ using NPZ
 using DelimitedFiles
 using Printf
 
+"""
+    export_run(ckpt_input, data_dir, output_dir; ...)
+
+Exports a model checkpoint into a standardized browser bundle:
+  output_dir/
+    ├── manifest.json
+    ├── events.json
+    ├── streams.json
+    └── spikes.json
+"""
 function export_run(
-    ckpt_path::String,
+    ckpt_input::Union{String, NamedTuple, Dict},
     data_dir::String,
     output_dir::String;
     run_id::String="run",
-    run_name::String="PPSeq Run"
+    run_name::String="PPSeq Run",
+    t_window::Union{Nothing, Tuple{Float64, Float64}}=nothing,
+    channel_subset::Union{Nothing, Vector{Int}, Set{Int}}=nothing
 )
     mkpath(output_dir)
     println("="^75)
@@ -20,39 +32,59 @@ function export_run(
     println("="^75)
 
     # 1. Load Checkpoint
-    println("Loading checkpoint: $ckpt_path ...")
-    ckpt = deserialize(ckpt_path)
+    ckpt = isa(ckpt_input, String) ? deserialize(ckpt_input) : ckpt_input
     motifs = ckpt[:motifs]
     occs = ckpt[:occurrences]
-    assign = ckpt[:assign]
-    ou_ctx = ckpt[:ou_ctx]
-    bg_rates = ckpt[:bg_rates]
-    ard_state = ckpt[:ard_state]
+    assign = haskey(ckpt, :assign) ? ckpt[:assign] : nothing
+    ou_ctx = haskey(ckpt, :ou_ctx) ? ckpt[:ou_ctx] : nothing
+    beh_names = haskey(ckpt, :beh_names) ? ckpt[:beh_names] : nothing
 
     # 2. Load Unit & Region metadata
     units_file = joinpath(data_dir, "units.csv")
     units_raw, _ = readdlm(units_file, Char(44), header=true)
     raw_regions = String.(units_raw[:, 3])
     raw_depths = [coalesce(tryparse(Float64, string(x)), 0.0) for x in units_raw[:, 4]]
-    N_units = length(raw_regions)
+    N_neural = length(raw_regions)
+    N_units = N_neural
+    if beh_names !== nothing
+        N_units = max(N_neural, maximum(keys(beh_names)))
+    end
 
     mop_units = findall(r -> startswith(r, "MOp"), raw_regions)
     cp_units  = findall(r -> !startswith(r, "MOp"), raw_regions)
+
+    if channel_subset !== nothing
+        mop_units = filter(c -> c in channel_subset, mop_units)
+        cp_units  = filter(c -> c in channel_subset, cp_units)
+    end
 
     # 3. Load Spikes
     raw_npz = npzread(joinpath(data_dir, "joint.npz"))
     ts_all = Float64.(raw_npz["timestamp"])
     ch_all = Int.(raw_npz["channel"])
 
-    idx_valid = findall(i -> ch_all[i] <= N_units, 1:length(ts_all))
-    ts_spk = ts_all[idx_valid]
-    ch_spk = ch_all[idx_valid]
-    T_total = maximum(ts_spk)
+    if t_window !== nothing
+        t0, t1 = t_window
+        valid_idx = findall(i -> (t0 <= ts_all[i] <= t1) && (ch_all[i] <= N_units), 1:length(ts_all))
+        if channel_subset !== nothing
+            valid_idx = filter(i -> ch_all[i] in channel_subset, valid_idx)
+        end
+        ts_spk = ts_all[valid_idx] .- t0
+        ch_spk = ch_all[valid_idx]
+        T_total = t1 - t0
+    else
+        valid_idx = findall(i -> ch_all[i] <= N_units, 1:length(ts_all))
+        if channel_subset !== nothing
+            valid_idx = filter(i -> ch_all[i] in channel_subset, valid_idx)
+        end
+        ts_spk = ts_all[valid_idx]
+        ch_spk = ch_all[valid_idx]
+        T_total = isempty(ts_spk) ? 100.0 : maximum(ts_spk)
+    end
 
     println("Total Spikes: $(length(ts_spk)) across $N_units units (T = $(round(T_total, digits=2)) s)")
 
     # 4. Process Motifs
-    # Palette of high-contrast colors
     palette = [
         "#e11d48", "#0284c7", "#0d9488", "#db2777", "#7c3aed",
         "#f59e0b", "#10b981", "#6366f1", "#ec4899", "#84cc16",
@@ -65,7 +97,6 @@ function export_run(
         P = length(m.packets)
         color = palette[mod1(m_idx, length(palette))]
         
-        # Compute mean latency in MOp vs CP
         mop_mus = [p.mu for p in m.packets if p.channel in mop_units]
         cp_mus  = [p.mu for p in m.packets if p.channel in cp_units]
         mop_mean_mu = isempty(mop_mus) ? 0.0 : mean(mop_mus)
@@ -105,7 +136,6 @@ function export_run(
     events_list = []
     for occ in sort(collect(values(occs)), by=o->o.tau)
         m_id = occ.motif
-        # Observed spikes assigned to this occurrence
         n_obs = sum(occ.counts)
         warp_mag = norm(occ.u)
         push!(events_list, Dict(
@@ -119,38 +149,54 @@ function export_run(
         ))
     end
 
-    # 6. Sample Continuous Data Streams (OU Arousal at native grid)
-    println("Sampling continuous streams (OU network arousal & drift)...")
-    t_stream = ou_ctx.t_net
-    B = min(length(t_stream), size(ou_ctx.x_region, 2))
-    t_stream_sub = t_stream[1:B]
-    x_mop_path = [round(ou_ctx.x_region[1, j], digits=4) for j in 1:B]
-    x_cp_path  = [round(ou_ctx.x_region[2, j], digits=4) for j in 1:B]
+    # 6. Sample Continuous Data Streams
+    println("Sampling continuous streams...")
+    active_stream_ids = String[]
+    streams_list = []
 
-    streams_dict = Dict(
-        "time" => [round(t, digits=2) for t in t_stream_sub],
-        "streams" => [
-            Dict(
-                "id" => "x_MOp",
-                "label" => "MOp Network Arousal (τ = 0.5s)",
-                "color" => "#388bfd",
-                "unit" => "a.u.",
-                "data" => x_mop_path
-            ),
-            Dict(
-                "id" => "x_CP",
-                "label" => "CP Network Arousal (τ = 0.5s)",
-                "color" => "#f0883e",
-                "unit" => "a.u.",
-                "data" => x_cp_path
-            )
-        ]
-    )
+    if ou_ctx !== nothing
+        t_stream = ou_ctx.t_net
+        if t_window !== nothing
+            t0, t1 = t_window
+            mask = findall(t -> t0 <= t <= t1, t_stream)
+            if !isempty(mask)
+                t_out = [round(t_stream[j] - t0, digits=2) for j in mask]
+                x_mop = [round(ou_ctx.x_region[1, j], digits=4) for j in mask]
+                x_cp  = [round(ou_ctx.x_region[2, j], digits=4) for j in mask]
+            else
+                t_out = [0.0, T_total]
+                x_mop = [0.0, 0.0]
+                x_cp  = [0.0, 0.0]
+            end
+        else
+            B = min(length(t_stream), size(ou_ctx.x_region, 2))
+            t_out = [round(t, digits=2) for t in t_stream[1:B]]
+            x_mop = [round(ou_ctx.x_region[1, j], digits=4) for j in 1:B]
+            x_cp  = [round(ou_ctx.x_region[2, j], digits=4) for j in 1:B]
+        end
 
-    # 7. Downsampled Overview Spikes (for instant browser render)
-    # Full spike density LOD: bin into 100ms bins per channel for macroscopic overview
+        push!(streams_list, Dict(
+            "id" => "x_MOp",
+            "label" => "MOp Network Arousal (τ = 0.5s)",
+            "color" => "#388bfd",
+            "unit" => "a.u.",
+            "data" => x_mop
+        ))
+        push!(streams_list, Dict(
+            "id" => "x_CP",
+            "label" => "CP Network Arousal (τ = 0.5s)",
+            "color" => "#f0883e",
+            "unit" => "a.u.",
+            "data" => x_cp
+        ))
+        active_stream_ids = ["x_MOp", "x_CP"]
+        streams_dict = Dict("time" => t_out, "streams" => streams_list)
+    else
+        streams_dict = Dict("time" => [0.0, T_total], "streams" => [])
+    end
+
+    # 7. Downsampled Overview Spikes (LOD for 60-FPS canvas rendering)
     println("Preparing multi-scale spike data...")
-    # Save raw downsampled spikes (up to 150k representative spikes for standalone offline view)
     step_sub = max(1, Int(floor(length(ts_spk) / 120000)))
     sub_idx = 1:step_sub:length(ts_spk)
     
@@ -161,6 +207,21 @@ function export_run(
     )
 
     # 8. Manifest Metadata
+    regions_dict = Dict{String, Any}(
+        "MOp" => Dict("name" => "Motor Cortex (MOp)", "count" => length(mop_units), "channels" => mop_units, "color" => "#388bfd"),
+        "CP"  => Dict("name" => "Dorsal Striatum (CP)", "count" => length(cp_units),  "channels" => cp_units,  "color" => "#f0883e")
+    )
+    if beh_names !== nothing
+        beh_chans = sort(collect(keys(beh_names)))
+        regions_dict["Behavior"] = Dict(
+            "name" => "Task Pokes & Reward",
+            "count" => length(beh_chans),
+            "channels" => beh_chans,
+            "color" => "#10b981",
+            "labels" => [beh_names[c] for c in beh_chans]
+        )
+    end
+
     manifest = Dict(
         "run_id" => run_id,
         "run_name" => run_name,
@@ -170,12 +231,9 @@ function export_run(
         "n_spikes" => length(ts_spk),
         "n_motifs" => length(motifs),
         "n_events" => length(occs),
-        "regions" => Dict(
-            "MOp" => Dict("name" => "Motor Cortex (MOp)", "count" => length(mop_units), "channels" => mop_units, "color" => "#388bfd"),
-            "CP"  => Dict("name" => "Dorsal Striatum (CP)", "count" => length(cp_units),  "channels" => cp_units,  "color" => "#f0883e")
-        ),
+        "regions" => regions_dict,
         "motifs" => motifs_dict,
-        "active_streams" => ["x_MOp", "x_CP"]
+        "active_streams" => active_stream_ids
     )
 
     # Write JSON files
@@ -188,13 +246,3 @@ function export_run(
     println("✓ Run successfully exported to: $output_dir")
     println("="^75)
 end
-
-# Export default run from 100-sweep checkpoint
-ckpt_path = "/home/foaleng/Documents/PurePacketPPSeq/scripts/checkpoint_pure_packet_cold_start_100sweeps.jls"
-data_dir  = "/home/foaleng/Downloads/mop_awake_ppseq/custom_sampler/results/top4_task_20261008/data/lgcy0288__20230519_114115__ephys"
-out_dir   = "/home/foaleng/Documents/PurePacketPPSeq/runs/lgcy0288_awake_100sweeps"
-
-export_run(ckpt_path, data_dir, out_dir;
-    run_id="lgcy0288_awake_100sweeps",
-    run_name="Session lgcy0288 · Cold-Start 100 Sweeps (411 Units, 20 Motifs)"
-)
