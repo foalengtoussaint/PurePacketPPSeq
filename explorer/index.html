@@ -548,6 +548,23 @@
       17: '#388bfd', 18: '#ec6547', 19: '#b392f0', 20: '#ea6045'
     };
 
+    // Global Reusable 2D Physical Pixel Occupancy Tracker
+    class PixelGridTracker {
+      constructor(nChannels) {
+        this.nChannels = nChannels;
+        this.lastPx = new Int32Array(nChannels).fill(-1000);
+      }
+      testAndSet(channel, pxCol) {
+        if (channel < 0 || channel >= this.nChannels) return false;
+        if (this.lastPx[channel] === pxCol) return false;
+        this.lastPx[channel] = pxCol;
+        return true;
+      }
+      reset() {
+        this.lastPx.fill(-1000);
+      }
+    }
+
     // Core State
     const state = {
       manifest: null,
@@ -937,9 +954,10 @@
       const h_motif = Math.max(55, activeMotifRows.length * rowH);
 
       const padT_spike   = padT_motif + h_motif + 16;
-      const padT_beh     = h - 46, h_beh = 22; // Dedicated Pokes Track
-      const padT_axis    = h - 22, h_axis = 18;
-      const h_spike      = Math.max(120, padT_beh - padT_spike - 10); // Takes ALL remaining space!
+      const h_beh        = 84; // Dedicated 15-Channel Behavioral Poke Raster
+      const padT_beh     = h - h_beh - 24;
+      const padT_axis    = h - 20, h_axis = 18;
+      const h_spike      = Math.max(120, padT_beh - padT_spike - 12); // Takes ALL remaining space!
 
       // -------------------------------------------------------------
       // 1. CONTINUOUS DATA STREAMS (OU Arousal x_MOp & x_CP)
@@ -1048,54 +1066,68 @@
       });
       ctx.textAlign = "left";
 
-      // Render Sequence Occurrences with deterministic peak-hold per pixel column
+      // Render Sequence Occurrences with Energy-Preserving RMS Vigor Aggregation
       state.renderedOccurrences = [];
       state.hoveredEvent = null;
 
       if (state.events && state.events.length > 0) {
-        const isCloseZoom = tSpan < 2.5;
-        const isMediumZoom = tSpan < 15.0;
-        const motifSpikeW = isCloseZoom ? 2.5 : (isMediumZoom ? 1.8 : 1.2);
         const sel = state.selectedEvent;
+        const evBins = new Map();
 
-        // Deterministic peak-hold per motif per pixel column when zoomed out
         const evCount = state.events.length;
-        const usePeakHold = tSpan > 120.0;
-        const lastEvPx = {};
-
         for (let i = 0; i < evCount; i++) {
           const ev = state.events[i];
           if (!state.activeMotifs.has(ev.motif)) continue;
           if (ev.time < t0 - 1.0 || ev.time > t1 + 1.0) continue;
+          if (rowYMap[ev.motif] === undefined) continue;
 
-          const ry = rowYMap[ev.motif];
-          if (ry === undefined) continue;
-
-          const baseY = ry + rowH - 1.5;
           const ex = padL + ((ev.time - t0) / tSpan) * plotW;
-          const isSelected = sel && sel.id === ev.id;
-          const color = MOTIF_PALETTE[ev.motif] || "#58a6ff";
+          const pxCol = Math.round(ex);
+          const key = (ev.motif << 16) | (pxCol & 0xFFFF);
 
-          // Peak hold filtering: If two events of same motif occur in exact same pixel, keep stronger one
-          if (usePeakHold && !isSelected) {
-            const pxCol = Math.round(ex);
-            const key = (ev.motif << 16) | pxCol;
-            if (lastEvPx[key] !== undefined && lastEvPx[key] >= (ev.amp || 1.0)) {
-              continue; // A stronger or equal occurrence is already drawn at this pixel!
-            }
-            lastEvPx[key] = (ev.amp || 1.0);
+          let bin = evBins.get(key);
+          if (!bin) {
+            bin = {
+              motif: ev.motif,
+              pxCol: pxCol,
+              x: ex,
+              events: [],
+              sumSqAmp: 0,
+              maxAmp: 0,
+              bestEv: ev
+            };
+            evBins.set(key, bin);
           }
+          bin.events.push(ev);
+          const a = ev.amp || 1.0;
+          bin.sumSqAmp += a * a;
+          if (a > bin.maxAmp) {
+            bin.maxAmp = a;
+            bin.bestEv = ev;
+          }
+        }
 
-          const normAmp = Math.min(1.0, Math.max(0.12, Math.sqrt(ev.amp || 1.0) / 1.5));
+        for (const bin of evBins.values()) {
+          const ry = rowYMap[bin.motif];
+          const baseY = ry + rowH - 1.5;
+          const k = bin.events.length;
+          // RMS Energy-Preserving Amplitude
+          const rmsAmp = Math.sqrt(bin.sumSqAmp / k);
+          const normAmp = Math.min(1.0, Math.max(0.12, Math.sqrt(rmsAmp) / 1.5));
           const maxSpkH = Math.max(3.5, rowH - 2.5);
           const spikeH = Math.max(2.5, normAmp * maxSpkH);
           const topY = baseY - spikeH;
 
+          const color = MOTIF_PALETTE[bin.motif] || "#58a6ff";
+          const isSelected = sel && bin.events.some(e => e.id === sel.id);
+          const stemW = k > 1 ? 2.0 : 1.5;
+
           state.renderedOccurrences.push({
-            event: ev,
-            x: ex,
+            event: bin.bestEv,
+            allEvents: bin.events,
+            x: bin.x,
             y: topY,
-            w: Math.max(8, motifSpikeW + 4),
+            w: Math.max(8, stemW + 4),
             h: spikeH + 4,
             baseY: baseY,
             color: color
@@ -1106,7 +1138,7 @@
             ctx.shadowColor = color;
             ctx.shadowBlur = 8;
             ctx.fillStyle = "#ffffff";
-            ctx.fillRect(ex - 1.5, topY - 2, 3.0, spikeH + 2);
+            ctx.fillRect(bin.x - 1.5, topY - 2, 3.0, spikeH + 2);
             ctx.restore();
 
             ctx.save();
@@ -1114,17 +1146,21 @@
             ctx.lineWidth = 1.5;
             ctx.setLineDash([3, 3]);
             ctx.beginPath();
-            ctx.moveTo(ex, baseY);
-            ctx.lineTo(ex, padT_spike + h_spike);
+            ctx.moveTo(bin.x, baseY);
+            ctx.lineTo(bin.x, padT_spike + h_spike);
             ctx.stroke();
             ctx.restore();
           } else {
             ctx.fillStyle = color;
-            ctx.fillRect(ex - motifSpikeW / 2, topY, motifSpikeW, spikeH);
+            ctx.fillRect(bin.x - stemW / 2, topY, stemW, spikeH);
+            if (k > 1) {
+              // Subtle cap tick indicating multi-occurrence density
+              ctx.fillRect(bin.x - 2.5, topY, 5.0, 1.2);
+            }
           }
 
-          if (Math.abs(state.mouseX - ex) < 6 && state.mouseY >= ry && state.mouseY <= baseY + 3) {
-            state.hoveredEvent = ev;
+          if (Math.abs(state.mouseX - bin.x) < 6 && state.mouseY >= ry && state.mouseY <= baseY + 3) {
+            state.hoveredEvent = bin.bestEv;
           }
         }
       }
@@ -1260,15 +1296,14 @@
         const idx0 = searchSorted(ts, t0 - 0.1);
         const idx1 = searchSorted(ts, t1 + 0.1);
 
-        const isCloseZoom = tSpan < 2.5;
-        const isMediumZoom = tSpan < 15.0;
-        const baseSpikeW = isCloseZoom ? 2.5 : (isMediumZoom ? 1.8 : 1.2);
-        const baseSpikeH = isCloseZoom ? 4.8 : (isMediumZoom ? 3.4 : 2.2);
+        const channelRowH = h_spike / N_neural;
+        const baseSpikeW = 1.5;
+        const baseSpikeH = Math.max(1.8, Math.min(4.5, channelRowH * 1.2));
 
         // Constant global alphas: exact same alpha every time
         const ALPHA_FG  = 1.0;
         const ALPHA_BG  = 0.20; // Constant muted alpha across all contrast modes
-        const ALPHA_OFF = isCloseZoom ? 0.95 : 0.85;
+        const ALPHA_OFF = 0.85;
 
         // SINGLE UNIFIED CONTRAST RESOLUTION FUNCTION
         function resolveSpikeContrast(evId, mId, isMop) {
@@ -1292,8 +1327,8 @@
                 color: MOTIF_PALETTE[mId] || regColor,
                 alpha: ALPHA_FG,
                 isForeground: true,
-                w: baseSpikeW,
-                h: baseSpikeH,
+                w: 1.8,
+                h: Math.max(2.2, baseSpikeH * 1.15),
                 glowCore: false
               };
             }
@@ -1313,9 +1348,9 @@
                 color: MOTIF_PALETTE[mId] || regColor,
                 alpha: ALPHA_FG,
                 isForeground: true,
-                w: Math.max(2.2, baseSpikeW + 0.8),
-                h: Math.max(3.8, baseSpikeH + 1.2),
-                glowCore: isCloseZoom
+                w: 2.2,
+                h: Math.max(2.8, baseSpikeH * 1.3),
+                glowCore: false
               };
             }
             return {
@@ -1334,9 +1369,9 @@
                 color: sel.color || MOTIF_PALETTE[sel.motif] || regColor,
                 alpha: ALPHA_FG,
                 isForeground: true,
-                w: Math.max(2.8, baseSpikeW + 1.2),
-                h: Math.max(4.5, baseSpikeH + 1.8),
-                glowCore: isCloseZoom
+                w: 2.8,
+                h: Math.max(3.5, baseSpikeH * 1.5),
+                glowCore: true
               };
             }
             return {
@@ -1359,10 +1394,8 @@
           };
         }
 
-        // Granular per-unit physical pixel collision tracking:
-        // A neuron only skips if THAT SPECIFIC NEURON already drew a tick in pixel column pxCol!
-        const lastBgX = new Int32Array(N_neural).fill(-1000);
-        const lastFgX = new Int32Array(N_neural).fill(-1000);
+        const bgTracker = new PixelGridTracker(N_neural);
+        const fgTracker = new PixelGridTracker(N_neural);
 
         // PASS 1: BACKGROUND / MUTED SPIKES (OR ALL SPIKES IF OFF)
         for (let i = idx0; i < idx1; i++) {
@@ -1384,8 +1417,7 @@
           const x = padL + ((t - t0) / tSpan) * plotW;
           const pxCol = Math.round(x);
 
-          if (lastBgX[mappedRank] === pxCol) continue;
-          lastBgX[mappedRank] = pxCol;
+          if (!bgTracker.testAndSet(mappedRank, pxCol)) continue;
 
           const y = padT_spike + (mappedRank / N_neural) * h_spike;
           ctx.globalAlpha = style.alpha;
@@ -1414,8 +1446,7 @@
             const x = padL + ((t - t0) / tSpan) * plotW;
             const pxCol = Math.round(x);
 
-            if (lastFgX[mappedRank] === pxCol) continue;
-            lastFgX[mappedRank] = pxCol;
+            if (!fgTracker.testAndSet(mappedRank, pxCol)) continue;
 
             const y = padT_spike + (mappedRank / N_neural) * h_spike;
             ctx.globalAlpha = style.alpha;
@@ -1433,42 +1464,67 @@
       ctx.globalAlpha = 1.0;
 
       // -------------------------------------------------------------
-      // 4. BEHAVIORAL POKES & REWARD TRACK (Dedicated Visible Channel)
+      // 4. BEHAVIORAL POKES & REWARD TRACK (15 Dedicated Channels)
       // -------------------------------------------------------------
       ctx.fillStyle = "rgba(255, 255, 255, 0.015)";
       ctx.fillRect(padL, padT_beh, plotW, h_beh);
 
-      ctx.textAlign = "right";
+      // Section header badge with subtle backdrop
+      ctx.fillStyle = "rgba(15, 21, 35, 0.75)";
+      ctx.fillRect(padL + 6, padT_beh - 13, 280, 12);
       ctx.fillStyle = "#3fb950";
-      ctx.font = "bold 9px ui-monospace, monospace";
-      ctx.fillText("POKES", padL - 8, padT_beh + 14);
+      ctx.font = "bold 8px -apple-system, system-ui";
+      ctx.fillText("BEHAVIORAL RASTER · 15 CHANNELS (PORTS 1–14 & REWARD)", padL + 10, padT_beh - 4);
+
+      const portRowH = h_beh / 15;
+      const behTracker = new PixelGridTracker(15);
+
+      // Draw horizontal channel baselines and gutter labels
+      for (let p = 0; p < 15; p++) {
+        const py = padT_beh + (p + 1) * portRowH;
+        const isRwd = p === 14;
+
+        ctx.strokeStyle = isRwd ? "rgba(241, 224, 90, 0.15)" : "rgba(255, 255, 255, 0.04)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(padL, py);
+        ctx.lineTo(w - padR, py);
+        ctx.stroke();
+
+        ctx.textAlign = "right";
+        if (isRwd) {
+          ctx.fillStyle = "#f1e05a";
+          ctx.font = "bold 8px ui-monospace, monospace";
+          ctx.fillText("RWD", padL - 8, py - 1.5);
+        } else {
+          ctx.fillStyle = "#6e7681";
+          ctx.font = "7.5px ui-monospace, monospace";
+          ctx.fillText(`P${p + 1}`, padL - 8, py - 1.5);
+        }
+      }
       ctx.textAlign = "left";
 
       // 1. Draw from state.pokes (Port entries)
       if (state.pokes && state.pokes.length > 0) {
-        ctx.fillStyle = "#3fb950";
-        const isClose = tSpan < 5.0;
         const pLen = state.pokes.length;
-        let lastPokePx = -1000;
-
         for (let i = 0; i < pLen; i++) {
           const p = state.pokes[i];
           if (p.time < t0 || p.time > t1) continue;
+          const portIdx = Math.min(14, Math.max(0, (p.port || 1) - 1));
           const px = padL + ((p.time - t0) / tSpan) * plotW;
           const pxCol = Math.round(px);
 
-          if (tSpan > 100 && pxCol === lastPokePx) continue;
-          lastPokePx = pxCol;
-          
-          ctx.beginPath();
-          ctx.arc(px, padT_beh + h_beh * 0.5, 3.2, 0, Math.PI * 2);
-          ctx.fill();
+          if (!behTracker.testAndSet(portIdx, pxCol)) continue;
 
-          if (isClose) {
-            ctx.fillStyle = "#ffffff";
-            ctx.font = "bold 8px monospace";
-            ctx.fillText(`P${p.port}`, px - 4, padT_beh + 9);
+          const py = padT_beh + portIdx * portRowH;
+          const isRwd = portIdx === 14;
+
+          if (isRwd) {
+            ctx.fillStyle = "#f1e05a";
+            ctx.fillRect(px - 1.5, py + 0.5, 3.0, portRowH - 1.0);
+          } else {
             ctx.fillStyle = "#3fb950";
+            ctx.fillRect(px - 1.0, py + 1.0, 2.0, portRowH - 2.0);
           }
         }
       }
@@ -1479,27 +1535,28 @@
         const ranks = state.spikes.r;
         const idx0 = searchSorted(ts, t0 - 0.1);
         const idx1 = searchSorted(ts, t1 + 0.1);
-        let lastBehPx = -1000;
 
         for (let i = idx0; i < idx1; i++) {
           const rank = ranks[i];
           if (rank >= neuralDivRank) {
             const t = ts[i];
+            if (t < t0 || t > t1) continue;
+
+            const portIdx = Math.min(14, Math.max(0, rank - neuralDivRank));
             const px = padL + ((t - t0) / tSpan) * plotW;
             const pxCol = Math.round(px);
 
-            if (tSpan > 100 && pxCol === lastBehPx) continue;
-            lastBehPx = pxCol;
+            if (!behTracker.testAndSet(portIdx, pxCol)) continue;
 
-            const portIdx = rank - neuralDivRank;
-            const isReward = portIdx === 14;
+            const py = padT_beh + portIdx * portRowH;
+            const isRwd = portIdx === 14;
 
-            if (isReward) {
+            if (isRwd) {
               ctx.fillStyle = "#f1e05a";
-              ctx.fillRect(px - 1.5, padT_beh + 2, 3, h_beh - 4);
+              ctx.fillRect(px - 1.5, py + 0.5, 3.0, portRowH - 1.0);
             } else {
               ctx.fillStyle = "#3fb950";
-              ctx.fillRect(px - 1, padT_beh + 3, 2, h_beh - 6);
+              ctx.fillRect(px - 1.0, py + 1.0, 2.0, portRowH - 2.0);
             }
           }
         }
