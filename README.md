@@ -134,6 +134,29 @@ Validated on dual-structure Neuropixels recordings from awake mice performing an
 
 ---
 
+## Interactive Model Explorer
+
+PurePacketPPSeq includes a zero-dependency, GPU-accelerated 60-FPS browser-based Model Explorer for interactive inspection of point-process motif occurrences, continuous data streams ($x_r(t)$, behavioral variables), and multi-unit spike rasters.
+
+```bash
+# 1. Launch the explorer (opens http://localhost:8050)
+./run_explorer.sh
+
+# 2. Export any custom model run into the explorer format
+julia --project=. scripts/export_run_for_explorer.jl
+```
+
+### Standardized Run Bundle (`runs/<run_id>/`)
+Any model fit can be inspected by producing a standardized 4-file bundle:
+* `manifest.json`: Session metadata, channel anatomical mappings, motif dictionary, and stream keys.
+* `events.json`: Motif occurrences $(\tau_e, z_e, c_e, \mathbf{u}_e, \text{observed spikes})$.
+* `streams.json`: Continuous time series (e.g. cortical/striatal OU excitability, velocity, LFP).
+* `spikes.json`: Multi-unit spike raster overview.
+
+*Offline Mode:* Users can also open any run directory directly from disk without starting the Python server by clicking **📂 Open Folder** in the explorer header.
+
+---
+
 ## Project Architecture
 
 ```
@@ -153,7 +176,14 @@ PurePacketPPSeq/
 │   │   ├── m4_manifold.jl        # m=4: Heavy-tailed Student-t continuous warping & ARD
 │   │   └── m5_ou.jl              # m=5: Fully coupled continuous engine
 │   └── scales/                   # Multi-scale background OU models
+├── explorer/                     # Web-based Model Explorer
+│   ├── index.html                # High-performance Canvas/SVG interactive visualizer
+│   └── server.py                 # Lightweight API server for dynamic run discovery
+├── runs/                         # Standardized store for exported model runs
+│   └── lgcy0288_awake_100sweeps/ # Demo 100-sweep run (411 units, 20 motifs, 8,770 events)
+├── run_explorer.sh               # One-click launcher script
 ├── scripts/                      # Experiment orchestration & figure generation
+│   ├── export_run_for_explorer.jl # Standardized run export script
 │   ├── plot_fig1_unsupervised_motifs.py
 │   ├── plot_figure2_behavioral_correspondence.jl
 │   ├── plot_fig3_continuous_warping.jl

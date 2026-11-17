@@ -1,0 +1,1257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PurePacketPPSeq · Model Explorer</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --surface: #111827;
+      --surface-alt: #1a2333;
+      --surface-hover: #232e42;
+      --border: rgba(255, 255, 255, 0.09);
+      --border-focus: rgba(56, 139, 253, 0.6);
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --text-subtle: #6b7280;
+      --primary: #388bfd;
+      --accent: #f0883e;
+      --mop: #388bfd;
+      --cp: #f0883e;
+      --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.4;
+      padding: 12px 18px 24px 18px;
+      user-select: none;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    /* Top Navigation Header */
+    .app-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 12px;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .brand-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-badge {
+      background: linear-gradient(135deg, #2563eb, #7c3aed);
+      color: #fff;
+      font-weight: 700;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .brand-title {
+      font-size: 17px;
+      font-weight: 600;
+      letter-spacing: -0.2px;
+    }
+
+    .run-nav-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--surface);
+      padding: 4px 8px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    .run-select {
+      background: var(--surface-alt);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      outline: none;
+      min-width: 260px;
+    }
+    .run-select:focus { border-color: var(--primary); }
+
+    .btn-action {
+      background: var(--surface-alt);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+    .btn-action:hover {
+      background: var(--surface-hover);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Meta Banner */
+    .meta-banner {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      background: var(--surface);
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      margin-bottom: 12px;
+      font-size: 12px;
+      color: var(--text-muted);
+      overflow-x: auto;
+    }
+    .meta-item { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+    .meta-val { color: var(--text); font-weight: 600; }
+    .meta-sep { color: var(--text-subtle); }
+
+    /* Controls Bar */
+    .controls-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+
+    .btn-group {
+      display: inline-flex;
+      background: var(--surface);
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .btn-seg {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 5px 11px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border-right: 1px solid var(--border);
+      transition: background 0.12s;
+    }
+    .btn-seg:last-child { border-right: none; }
+    .btn-seg:hover { background: var(--surface-hover); color: var(--text); }
+    .btn-seg.active {
+      background: var(--surface-alt);
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    .filter-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-subtle);
+      margin-right: 2px;
+    }
+
+    .motif-chips {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      flex-wrap: wrap;
+    }
+    .motif-chip {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.15s ease;
+    }
+    .motif-chip:hover { border-color: rgba(255, 255, 255, 0.3); color: var(--text); }
+    .motif-chip.active {
+      background: var(--surface-alt);
+      color: var(--text);
+      border-color: rgba(255, 255, 255, 0.25);
+    }
+    .chip-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+    }
+
+    /* Scrubber Track */
+    .scrubber-container {
+      position: relative;
+      height: 38px;
+      background: var(--surface);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      margin-bottom: 10px;
+      cursor: pointer;
+      overflow: hidden;
+    }
+    .scrubber-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+    .scrubber-viewport {
+      position: absolute;
+      top: 0;
+      height: 100%;
+      background: rgba(56, 139, 253, 0.18);
+      border-left: 2px solid var(--primary);
+      border-right: 2px solid var(--primary);
+      box-sizing: border-box;
+      cursor: grab;
+    }
+    .scrubber-viewport:active { cursor: grabbing; }
+
+    /* Work Area with Side Drawer */
+    .workarea-layout {
+      display: flex;
+      gap: 14px;
+      position: relative;
+    }
+
+    .main-canvases-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .canvas-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 12px;
+      background: var(--surface-alt);
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      letter-spacing: 0.3px;
+    }
+
+    canvas.display-canvas {
+      display: block;
+      width: 100%;
+      cursor: crosshair;
+    }
+
+    /* Time Axis Canvas */
+    .axis-canvas-container {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 2px 0;
+    }
+
+    /* Side Inspector Drawer */
+    .inspector-drawer {
+      width: 310px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: none;
+      flex-direction: column;
+      padding: 14px;
+      gap: 12px;
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+    .inspector-drawer.open { display: flex; }
+
+    .drawer-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .drawer-title {
+      font-weight: 600;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-close {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .btn-close:hover { color: var(--text); }
+
+    .drawer-card {
+      background: var(--surface-alt);
+      border-radius: 6px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .card-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .card-lbl { color: var(--text-muted); }
+    .card-val { color: var(--text); font-weight: 600; font-family: var(--font-mono); }
+
+    .btn-drawer-zoom {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 12px;
+      cursor: pointer;
+      margin-top: 4px;
+    }
+    .btn-drawer-zoom:hover { opacity: 0.9; }
+
+    /* Tooltip */
+    .tooltip {
+      position: absolute;
+      background: rgba(17, 24, 39, 0.95);
+      border: 1px solid var(--border-focus);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 11px;
+      color: var(--text);
+      pointer-events: none;
+      z-index: 100;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      display: none;
+    }
+    .tooltip-title { font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+
+    /* Status Bar */
+    .status-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: var(--text-subtle);
+      margin-top: 10px;
+      padding: 0 4px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation Header -->
+  <header class="app-header">
+    <div class="brand-group">
+      <span class="brand-badge">PurePacket</span>
+      <span class="brand-title">Model Explorer</span>
+    </div>
+
+    <!-- Run Switcher & Local Loader -->
+    <div class="run-nav-group">
+      <label for="run-select" class="filter-label">Run:</label>
+      <select id="run-select" class="run-select">
+        <option value="">Loading available runs...</option>
+      </select>
+      <input type="file" id="local-dir-input" webkitdirectory directory multiple style="display:none;">
+      <button class="btn-action" id="btn-open-local" title="Open any run folder directly from disk">
+        <span>📂 Open Folder</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Run Metadata Banner -->
+  <div class="meta-banner" id="meta-banner">
+    <div class="meta-item"><span>Session:</span> <span class="meta-val" id="meta-session">--</span></div>
+    <span class="meta-sep">·</span>
+    <div class="meta-item"><span>Duration:</span> <span class="meta-val" id="meta-duration">--</span></div>
+    <span class="meta-sep">·</span>
+    <div class="meta-item"><span>Units:</span> <span class="meta-val" id="meta-units">--</span></div>
+    <span class="meta-sep">·</span>
+    <div class="meta-item"><span>Total Spikes:</span> <span class="meta-val" id="meta-spikes">--</span></div>
+    <span class="meta-sep">·</span>
+    <div class="meta-item"><span>Inferred Motifs:</span> <span class="meta-val" id="meta-motifs">--</span></div>
+    <span class="meta-sep">·</span>
+    <div class="meta-item"><span>Total Occurrences:</span> <span class="meta-val" id="meta-events">--</span></div>
+  </div>
+
+  <!-- Controls & Filters Toolbar -->
+  <div class="controls-bar">
+    <div class="btn-group" id="window-presets">
+      <button class="btn-seg" data-win="1.0">1s</button>
+      <button class="btn-seg" data-win="5.0">5s</button>
+      <button class="btn-seg active" data-win="30.0">30s</button>
+      <button class="btn-seg" data-win="60.0">60s</button>
+      <button class="btn-seg" data-win="full">Full</button>
+    </div>
+
+    <div class="btn-group" id="region-filters">
+      <button class="btn-seg active" data-reg="all">All Regions</button>
+      <button class="btn-seg" data-reg="MOp" style="color:var(--mop);">MOp</button>
+      <button class="btn-seg" data-reg="CP" style="color:var(--cp);">CP</button>
+    </div>
+
+    <button class="btn-action" id="btn-reset-view" title="Reset viewport">⟲ Reset</button>
+
+    <div style="flex:1;"></div>
+
+    <!-- Active Motifs Chips -->
+    <div class="motif-chips" id="motif-chips-container"></div>
+  </div>
+
+  <!-- Full-Session Timeline Scrubber -->
+  <div class="scrubber-container" id="scrubber-container" title="Click or drag to scrub viewport">
+    <canvas id="scrubber-canvas" class="scrubber-canvas"></canvas>
+    <div id="scrubber-viewport" class="scrubber-viewport"></div>
+  </div>
+
+  <!-- Main Multi-Track Work Area -->
+  <div class="workarea-layout">
+    <div class="main-canvases-col">
+
+      <!-- Track 1: Continuous Data Streams -->
+      <div class="canvas-panel" id="panel-streams">
+        <div class="panel-header">
+          <span>Continuous Data Streams (Level m=5 OU Arousal & Drift)</span>
+          <div id="streams-legend" style="display:flex; gap:12px;"></div>
+        </div>
+        <canvas id="streams-canvas" class="display-canvas" height="90"></canvas>
+      </div>
+
+      <!-- Track 2: Motif Occurrences Timeline -->
+      <div class="canvas-panel" id="panel-events">
+        <div class="panel-header">
+          <span>Motif Occurrences (Level m=2 · Height ∝ Motor Vigor $c_e$)</span>
+          <span id="events-count-badge">0 visible</span>
+        </div>
+        <canvas id="events-canvas" class="display-canvas" height="80"></canvas>
+      </div>
+
+      <!-- Track 3: Multi-Unit Spike Raster -->
+      <div class="canvas-panel" id="panel-raster">
+        <div class="panel-header">
+          <span>Multi-Unit Spike Raster (Scale n=0 Spikes)</span>
+          <span id="spikes-count-badge">0 visible</span>
+        </div>
+        <canvas id="raster-canvas" class="display-canvas" height="340"></canvas>
+      </div>
+
+      <!-- Synchronized Time Ruler -->
+      <div class="axis-canvas-container">
+        <canvas id="axis-canvas" class="display-canvas" height="26"></canvas>
+      </div>
+    </div>
+
+    <!-- Side Inspector Drawer -->
+    <aside class="inspector-drawer" id="inspector-drawer">
+      <div class="drawer-header">
+        <div class="drawer-title">
+          <span id="drawer-dot" style="width:10px; height:10px; border-radius:50%; background:var(--primary);"></span>
+          <span id="drawer-motif-title">Occurrence Details</span>
+        </div>
+        <button class="btn-close" id="btn-close-drawer">✕</button>
+      </div>
+
+      <div class="drawer-card">
+        <div class="card-row"><span class="card-lbl">Occurrence ID:</span><span class="card-val" id="d-id">--</span></div>
+        <div class="card-row"><span class="card-lbl">Motif:</span><span class="card-val" id="d-motif">--</span></div>
+        <div class="card-row"><span class="card-lbl">Onset Time (τₑ):</span><span class="card-val" id="d-tau">--</span></div>
+        <div class="card-row"><span class="card-lbl">Motor Vigor (cₑ):</span><span class="card-val" id="d-amp">--</span></div>
+        <div class="card-row"><span class="card-lbl">Manifold Warp (‖uₑ‖):</span><span class="card-val" id="d-warp">--</span></div>
+        <div class="card-row"><span class="card-lbl">Attributed Spikes:</span><span class="card-val" id="d-obs">--</span></div>
+      </div>
+
+      <div class="drawer-card" id="drawer-motif-card">
+        <div class="card-row"><span class="card-lbl">Packets in Motif:</span><span class="card-val" id="d-pkts">--</span></div>
+        <div class="card-row"><span class="card-lbl">Cortico-Striatal Lag:</span><span class="card-val" id="d-lag">--</span></div>
+        <div class="card-row"><span class="card-lbl">Lead Direction:</span><span class="card-val" id="d-leaddir">--</span></div>
+      </div>
+
+      <button class="btn-drawer-zoom" id="btn-zoom-to-event">🔍 Center View on Occurrence</button>
+    </aside>
+  </div>
+
+  <!-- Tooltip Element -->
+  <div class="tooltip" id="tooltip">
+    <div class="tooltip-title">
+      <span id="tt-dot" style="width:8px; height:8px; border-radius:50%; background:#fff;"></span>
+      <span id="tt-title">Event</span>
+    </div>
+    <div id="tt-body" style="font-family:var(--font-mono); font-size:10px; line-height:1.5;"></div>
+  </div>
+
+  <!-- Bottom Status Bar -->
+  <footer class="status-bar">
+    <div id="status-viewport-text">Viewport: 0.00s – 30.00s (Span: 30.00s)</div>
+    <div>Scroll wheel to zoom · Click-drag to pan · Click event glyph to inspect</div>
+  </footer>
+
+  <script>
+    // PurePacketPPSeq Model Explorer Core Application State
+    const state = {
+      manifest: null,
+      events: [],
+      streams: null,
+      spikes: { t: [], c: [] },
+      T_total: 100.0,
+      t_start: 0.0,
+      t_end: 30.0,
+      selectedEvent: null,
+      activeMotifs: new Set(),
+      regionFilter: "all",
+      isDraggingScrubber: false,
+      isPanningCanvas: false,
+      panStartX: 0,
+      panStartT0: 0,
+      panStartT1: 30,
+      mouseX: -1,
+      hoveredEvent: null
+    };
+
+    // Canvas references
+    const scrubberCanvas = document.getElementById("scrubber-canvas");
+    const scrubberViewport = document.getElementById("scrubber-viewport");
+    const streamsCanvas = document.getElementById("streams-canvas");
+    const eventsCanvas = document.getElementById("events-canvas");
+    const rasterCanvas = document.getElementById("raster-canvas");
+    const axisCanvas = document.getElementById("axis-canvas");
+    const tooltip = document.getElementById("tooltip");
+
+    // Initialize & Fetch Runs List
+    async function initExplorer() {
+      setupEventListeners();
+      await fetchAvailableRuns();
+    }
+
+    async function fetchAvailableRuns() {
+      const select = document.getElementById("run-select");
+      try {
+        const resp = await fetch("/api/runs");
+        if (resp.ok) {
+          const runs = await resp.json();
+          select.innerHTML = "";
+          if (runs.length === 0) {
+            select.innerHTML = '<option value="">No runs found in runs/</option>';
+            return;
+          }
+          runs.forEach(r => {
+            const opt = document.createElement("option");
+            opt.value = r.id;
+            opt.textContent = `${r.name} (${r.duration}s)`;
+            select.appendChild(opt);
+          });
+          // Load first run by default
+          loadRun(runs[0].id);
+        } else {
+          select.innerHTML = '<option value="">Server offline (use Open Folder)</option>';
+        }
+      } catch (err) {
+        select.innerHTML = '<option value="">Offline Mode (use Open Folder)</option>';
+      }
+    }
+
+    async function loadRun(runId) {
+      if (!runId) return;
+      try {
+        const [manRes, evRes, strRes, spkRes] = await Promise.all([
+          fetch(`/api/run/${runId}/manifest`).then(r => r.json()),
+          fetch(`/api/run/${runId}/events`).then(r => r.json()),
+          fetch(`/api/run/${runId}/streams`).then(r => r.json()),
+          fetch(`/api/run/${runId}/spikes`).then(r => r.json())
+        ]);
+        applyLoadedData(manRes, evRes, strRes, spkRes);
+      } catch (err) {
+        console.error("Error loading run:", err);
+      }
+    }
+
+    function applyLoadedData(manifest, events, streams, spikes) {
+      state.manifest = manifest;
+      state.events = events;
+      state.streams = streams;
+      state.spikes = spikes;
+      state.T_total = manifest.duration || 100.0;
+      state.t_start = 0.0;
+      state.t_end = Math.min(30.0, state.T_total);
+      state.selectedEvent = null;
+
+      // Populate Motifs
+      state.activeMotifs.clear();
+      const chipContainer = document.getElementById("motif-chips-container");
+      chipContainer.innerHTML = '<span class="filter-label">Motifs:</span>';
+      
+      const motifIds = Object.keys(manifest.motifs || {}).map(Number).sort((a,b)=>a-b);
+      motifIds.forEach(mId => {
+        state.activeMotifs.add(mId);
+        const mInfo = manifest.motifs[mId];
+        const chip = document.createElement("button");
+        chip.className = "motif-chip active";
+        chip.dataset.mid = mId;
+        chip.innerHTML = `<span class="chip-dot" style="background:${mInfo.color || '#388bfd'};"></span> M${mId}`;
+        chip.onclick = () => {
+          if (state.activeMotifs.has(mId)) {
+            state.activeMotifs.delete(mId);
+            chip.classList.remove("active");
+          } else {
+            state.activeMotifs.add(mId);
+            chip.classList.add("active");
+          }
+          requestRender();
+        };
+        chipContainer.appendChild(chip);
+      });
+
+      // Streams Legend
+      const legContainer = document.getElementById("streams-legend");
+      legContainer.innerHTML = "";
+      if (streams && streams.streams) {
+        streams.streams.forEach(s => {
+          const item = document.createElement("div");
+          item.style.display = "flex";
+          item.style.alignItems = "center";
+          item.style.gap = "5px";
+          item.style.fontSize = "10px";
+          item.innerHTML = `<span style="width:8px; height:8px; border-radius:50%; background:${s.color};"></span><span>${s.label}</span>`;
+          legContainer.appendChild(item);
+        });
+      }
+
+      // Update Banner
+      document.getElementById("meta-session").textContent = manifest.session || manifest.run_id;
+      document.getElementById("meta-duration").textContent = `${manifest.duration.toFixed(1)}s (${(manifest.duration/60).toFixed(1)}m)`;
+      document.getElementById("meta-units").textContent = manifest.n_units || manifest.regions?.MOp?.count + manifest.regions?.CP?.count || "--";
+      document.getElementById("meta-spikes").textContent = (manifest.n_spikes || spikes.total_count || 0).toLocaleString();
+      document.getElementById("meta-motifs").textContent = manifest.n_motifs || motifIds.length;
+      document.getElementById("meta-events").textContent = (manifest.n_events || events.length).toLocaleString();
+
+      closeDrawer();
+      renderScrubberOverview();
+      requestRender();
+    }
+
+    // Local Folder Loader (Drag & Drop or Dialog)
+    document.getElementById("btn-open-local").onclick = () => {
+      document.getElementById("local-dir-input").click();
+    };
+
+    document.getElementById("local-dir-input").onchange = async (e) => {
+      const files = Array.from(e.target.files);
+      if (files.length === 0) return;
+
+      const fileMap = {};
+      files.forEach(f => { fileMap[f.name] = f; });
+
+      if (!fileMap["manifest.json"]) {
+        alert("Selected directory does not contain manifest.json!");
+        return;
+      }
+
+      try {
+        const readJson = (file) => new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => res(JSON.parse(r.target.result));
+          r.onerror = rej;
+          r.readAsText(file);
+        });
+
+        const manifest = await readJson(fileMap["manifest.json"]);
+        const events = fileMap["events.json"] ? await readJson(fileMap["events.json"]) : [];
+        const streams = fileMap["streams.json"] ? await readJson(fileMap["streams.json"]) : null;
+        const spikes = fileMap["spikes.json"] ? await readJson(fileMap["spikes.json"]) : { t: [], c: [] };
+
+        // Add custom entry to dropdown
+        const select = document.getElementById("run-select");
+        const opt = document.createElement("option");
+        opt.value = "local_imported";
+        opt.textContent = `[Local] ${manifest.run_name || "Custom Run"}`;
+        select.appendChild(opt);
+        select.value = "local_imported";
+
+        applyLoadedData(manifest, events, streams, spikes);
+      } catch (err) {
+        alert("Failed to parse run bundle: " + err);
+      }
+    };
+
+    // Scrubber Overview Rendering
+    function renderScrubberOverview() {
+      const ctx = scrubberCanvas.getContext("2d");
+      const dpr = window.devicePixelRatio || 1;
+      const rect = scrubberCanvas.getBoundingClientRect();
+      scrubberCanvas.width = rect.width * dpr;
+      scrubberCanvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
+
+      const W = rect.width;
+      const H = rect.height;
+      ctx.clearRect(0, 0, W, H);
+
+      // Render occurrence density histogram across 200 bins
+      const nBins = 200;
+      const bins = new Float32Array(nBins);
+      const T = state.T_total;
+      if (T <= 0) return;
+
+      state.events.forEach(e => {
+        const b = Math.min(nBins - 1, Math.max(0, Math.floor((e.time / T) * nBins)));
+        bins[b] += 1;
+      });
+
+      let maxBin = 1;
+      for (let i = 0; i < nBins; i++) if (bins[i] > maxBin) maxBin = bins[i];
+
+      const binW = W / nBins;
+      ctx.fillStyle = "rgba(56, 139, 253, 0.4)";
+      for (let i = 0; i < nBins; i++) {
+        const h = (bins[i] / maxBin) * (H - 6);
+        ctx.fillRect(i * binW, H - h - 2, Math.max(1, binW - 0.5), h);
+      }
+
+      updateScrubberViewportBox();
+    }
+
+    function updateScrubberViewportBox() {
+      const rect = document.getElementById("scrubber-container").getBoundingClientRect();
+      const T = state.T_total;
+      if (T <= 0) return;
+
+      const leftPx = (state.t_start / T) * rect.width;
+      const widthPx = Math.max(4, ((state.t_end - state.t_start) / T) * rect.width);
+
+      scrubberViewport.style.left = `${leftPx}px`;
+      scrubberViewport.style.width = `${widthPx}px`;
+    }
+
+    // High Performance 60-FPS Viewport Rendering
+    let renderRequested = false;
+    function requestRender() {
+      if (!renderRequested) {
+        renderRequested = true;
+        requestAnimationFrame(renderAllCanvases);
+      }
+    }
+
+    function renderAllCanvases() {
+      renderRequested = false;
+      renderStreamsTrack();
+      renderEventsTrack();
+      renderRasterTrack();
+      renderAxisTrack();
+      updateScrubberViewportBox();
+      updateStatusDisplay();
+    }
+
+    // Helper: resize canvas to sharp physical pixels
+    function setupCanvasDpr(canvas) {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      const targetW = Math.round(rect.width * dpr);
+      const targetH = Math.round(rect.height * dpr);
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+      }
+      const ctx = canvas.getContext("2d");
+      ctx.resetTransform();
+      ctx.scale(dpr, dpr);
+      return { ctx, width: rect.width, height: rect.height };
+    }
+
+    // Track 1: Streams
+    function renderStreamsTrack() {
+      const { ctx, width, height } = setupCanvasDpr(streamsCanvas);
+      ctx.clearRect(0, 0, width, height);
+
+      if (!state.streams || !state.streams.streams) return;
+
+      const t0 = state.t_start;
+      const t1 = state.t_end;
+      const dt = t1 - t0;
+      if (dt <= 0) return;
+
+      // Draw zero axis line
+      const zeroY = height * 0.5;
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, zeroY);
+      ctx.lineTo(width, zeroY);
+      ctx.stroke();
+
+      const timeArr = state.streams.time;
+      if (!timeArr || timeArr.length === 0) return;
+
+      // Plot each continuous stream
+      state.streams.streams.forEach(s => {
+        const data = s.data;
+        if (!data || data.length === 0) return;
+
+        ctx.strokeStyle = s.color || "#388bfd";
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        let started = false;
+
+        // Sample visible range
+        for (let i = 0; i < timeArr.length; i++) {
+          const t = timeArr[i];
+          if (t < t0 - 0.5) continue;
+          if (t > t1 + 0.5) break;
+
+          const x = ((t - t0) / dt) * width;
+          const val = data[i];
+          // Scale: 0 is center, range +/- 1.5 a.u.
+          const y = zeroY - (val / 1.5) * (height * 0.42);
+
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else {
+            ctx.lineTo(x, y);
+          }
+        }
+        ctx.stroke();
+      });
+
+      // Crosshair
+      drawCrosshair(ctx, width, height);
+    }
+
+    // Track 2: Occurrences
+    function renderEventsTrack() {
+      const { ctx, width, height } = setupCanvasDpr(eventsCanvas);
+      ctx.clearRect(0, 0, width, height);
+
+      const t0 = state.t_start;
+      const t1 = state.t_end;
+      const dt = t1 - t0;
+      if (dt <= 0) return;
+
+      let visibleCount = 0;
+      state.hoveredEvent = null;
+
+      // Occurrences stem / pill glyphs
+      state.events.forEach(ev => {
+        if (!state.activeMotifs.has(ev.motif)) return;
+        if (ev.time < t0 - 0.2 || ev.time > t1 + 0.2) return;
+
+        visibleCount++;
+        const x = ((ev.time - t0) / dt) * width;
+        const mInfo = state.manifest?.motifs?.[ev.motif] || {};
+        const color = mInfo.color || "#388bfd";
+        const isSelected = state.selectedEvent && state.selectedEvent.id === ev.id;
+
+        // Amplitude height
+        const normAmp = Math.min(2.5, Math.max(0.2, ev.amp || 1.0));
+        const glyphH = normAmp * (height * 0.35);
+        const yTop = height - glyphH - 6;
+
+        // Stem
+        ctx.strokeStyle = color;
+        ctx.lineWidth = isSelected ? 3 : 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x, height - 3);
+        ctx.lineTo(x, yTop);
+        ctx.stroke();
+
+        // Top bulb / pill
+        ctx.fillStyle = isSelected ? "#fff" : color;
+        ctx.beginPath();
+        ctx.arc(x, yTop, isSelected ? 4.5 : 3, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Check hover
+        if (Math.abs(state.mouseX - x) < 5) {
+          state.hoveredEvent = ev;
+        }
+      });
+
+      document.getElementById("events-count-badge").textContent = `${visibleCount} visible`;
+      drawCrosshair(ctx, width, height);
+    }
+
+    // Track 3: Raster
+    function renderRasterTrack() {
+      const { ctx, width, height } = setupCanvasDpr(rasterCanvas);
+      ctx.clearRect(0, 0, width, height);
+
+      const t0 = state.t_start;
+      const t1 = state.t_end;
+      const dt = t1 - t0;
+      if (dt <= 0 || !state.spikes) return;
+
+      const N_units = state.manifest?.n_units || 411;
+      const mopEnd = state.manifest?.regions?.MOp?.count || Math.floor(N_units * 0.45);
+      const rowH = height / N_units;
+
+      // Region boundary divider
+      if (state.regionFilter === "all") {
+        const divY = (mopEnd / N_units) * height;
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(0, divY);
+        ctx.lineTo(width, divY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Region tags
+        ctx.fillStyle = "rgba(56, 139, 253, 0.6)";
+        ctx.font = "10px sans-serif";
+        ctx.fillText("Motor Cortex (MOp)", 8, 14);
+        ctx.fillStyle = "rgba(240, 136, 62, 0.6)";
+        ctx.fillText("Dorsal Striatum (CP)", 8, divY + 14);
+      }
+
+      // Draw spikes
+      const ts = state.spikes.t;
+      const cs = state.spikes.c;
+      const nSpk = ts.length;
+      let visibleSpikes = 0;
+
+      for (let i = 0; i < nSpk; i++) {
+        const t = ts[i];
+        if (t < t0 || t > t1) continue;
+
+        const c = cs[i];
+        const isMop = c <= mopEnd;
+        if (state.regionFilter === "MOp" && !isMop) continue;
+        if (state.regionFilter === "CP" && isMop) continue;
+
+        visibleSpikes++;
+        const x = ((t - t0) / dt) * width;
+        const y = (c / N_units) * height;
+
+        ctx.fillStyle = isMop ? "rgba(56, 139, 253, 0.75)" : "rgba(240, 136, 62, 0.75)";
+        ctx.fillRect(x - 0.5, y, 1.2, Math.max(1.5, rowH * 0.9));
+      }
+
+      document.getElementById("spikes-count-badge").textContent = `${visibleSpikes.toLocaleString()} spikes`;
+      drawCrosshair(ctx, width, height);
+    }
+
+    // Time Axis Ruler
+    function renderAxisTrack() {
+      const { ctx, width, height } = setupCanvasDpr(axisCanvas);
+      ctx.clearRect(0, 0, width, height);
+
+      const t0 = state.t_start;
+      const t1 = state.t_end;
+      const dt = t1 - t0;
+      if (dt <= 0) return;
+
+      // Smart tick calculation
+      const roughTicks = 8;
+      const rawStep = dt / roughTicks;
+      const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+      const residual = rawStep / mag;
+      let step = mag;
+      if (residual > 5) step = 5 * mag;
+      else if (residual > 2) step = 2 * mag;
+
+      const firstTick = Math.ceil(t0 / step) * step;
+      ctx.fillStyle = "var(--text-subtle)";
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+      ctx.font = "10px ui-monospace, monospace";
+      ctx.textAlign = "center";
+
+      for (let t = firstTick; t <= t1; t += step) {
+        const x = ((t - t0) / dt) * width;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, 5);
+        ctx.stroke();
+        ctx.fillText(`${t.toFixed(t < 10 && step < 1 ? 2 : 1)}s`, x, 17);
+      }
+
+      drawCrosshair(ctx, width, height);
+    }
+
+    function drawCrosshair(ctx, width, height) {
+      if (state.mouseX >= 0 && state.mouseX <= width) {
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(state.mouseX, 0);
+        ctx.lineTo(state.mouseX, height);
+        ctx.stroke();
+      }
+    }
+
+    function updateStatusDisplay() {
+      const span = state.t_end - state.t_start;
+      document.getElementById("status-viewport-text").textContent = 
+        `Viewport: ${state.t_start.toFixed(2)}s – ${state.t_end.toFixed(2)}s (Span: ${span.toFixed(2)}s)`;
+    }
+
+    // Inspector Drawer Handlers
+    function openDrawer(ev) {
+      state.selectedEvent = ev;
+      const mInfo = state.manifest?.motifs?.[ev.motif] || {};
+      const color = mInfo.color || "#388bfd";
+
+      document.getElementById("drawer-dot").style.background = color;
+      document.getElementById("drawer-motif-title").textContent = `Motif ${ev.motif} Occurrence`;
+      document.getElementById("d-id").textContent = `#${ev.id}`;
+      document.getElementById("d-motif").textContent = `Motif ${ev.motif}`;
+      document.getElementById("d-tau").textContent = `${ev.time.toFixed(4)} s`;
+      document.getElementById("d-amp").textContent = `${(ev.amp || 1.0).toFixed(3)}×`;
+      document.getElementById("d-warp").textContent = `${(ev.warp || 0.0).toFixed(3)} a.u.`;
+      document.getElementById("d-obs").textContent = `${ev.obs || 0} spikes`;
+
+      document.getElementById("d-pkts").textContent = mInfo.n_packets || "--";
+      document.getElementById("d-lag").textContent = mInfo.delta_lag_ms ? `${mInfo.delta_lag_ms} ms` : "--";
+      document.getElementById("d-leaddir").textContent = mInfo.lead_direction || "--";
+
+      document.getElementById("inspector-drawer").classList.add("open");
+      requestRender();
+    }
+
+    function closeDrawer() {
+      state.selectedEvent = null;
+      document.getElementById("inspector-drawer").classList.remove("open");
+      requestRender();
+    }
+
+    document.getElementById("btn-close-drawer").onclick = closeDrawer;
+
+    document.getElementById("btn-zoom-to-event").onclick = () => {
+      if (!state.selectedEvent) return;
+      const tau = state.selectedEvent.time;
+      state.t_start = Math.max(0, tau - 0.2);
+      state.t_end = Math.min(state.T_total, tau + 0.8);
+      requestRender();
+    };
+
+    // User Event Listeners
+    function setupEventListeners() {
+      window.addEventListener("resize", () => {
+        renderScrubberOverview();
+        requestRender();
+      });
+
+      // Run selection change
+      document.getElementById("run-select").onchange = (e) => {
+        loadRun(e.target.value);
+      };
+
+      // Window presets
+      document.querySelectorAll("#window-presets .btn-seg").forEach(btn => {
+        btn.onclick = () => {
+          document.querySelectorAll("#window-presets .btn-seg").forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+          const win = btn.dataset.win;
+          const center = (state.t_start + state.t_end) / 2;
+          if (win === "full") {
+            state.t_start = 0;
+            state.t_end = state.T_total;
+          } else {
+            const span = parseFloat(win);
+            state.t_start = Math.max(0, center - span / 2);
+            state.t_end = Math.min(state.T_total, state.t_start + span);
+            if (state.t_end - state.t_start < span) {
+              state.t_start = Math.max(0, state.t_end - span);
+            }
+          }
+          requestRender();
+        };
+      });
+
+      // Region filters
+      document.querySelectorAll("#region-filters .btn-seg").forEach(btn => {
+        btn.onclick = () => {
+          document.querySelectorAll("#region-filters .btn-seg").forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+          state.regionFilter = btn.dataset.reg;
+          requestRender();
+        };
+      });
+
+      // Reset button
+      document.getElementById("btn-reset-view").onclick = () => {
+        state.t_start = 0;
+        state.t_end = Math.min(30.0, state.T_total);
+        closeDrawer();
+        requestRender();
+      };
+
+      // Scrubber dragging
+      const scrubber = document.getElementById("scrubber-container");
+      scrubber.onmousedown = (e) => {
+        state.isDraggingScrubber = true;
+        updateScrubberFromMouse(e);
+      };
+      window.addEventListener("mousemove", (e) => {
+        if (state.isDraggingScrubber) {
+          updateScrubberFromMouse(e);
+        }
+      });
+      window.addEventListener("mouseup", () => {
+        state.isDraggingScrubber = false;
+        state.isPanningCanvas = false;
+      });
+
+      function updateScrubberFromMouse(e) {
+        const rect = scrubber.getBoundingClientRect();
+        const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        const clickT = frac * state.T_total;
+        const span = state.t_end - state.t_start;
+        state.t_start = Math.max(0, clickT - span / 2);
+        state.t_end = Math.min(state.T_total, state.t_start + span);
+        if (state.t_end - state.t_start < span) {
+          state.t_start = Math.max(0, state.t_end - span);
+        }
+        requestRender();
+      }
+
+      // Canvases mouse tracking & interaction
+      const canvases = [streamsCanvas, eventsCanvas, rasterCanvas, axisCanvas];
+      canvases.forEach(cv => {
+        cv.addEventListener("mousemove", (e) => {
+          const rect = cv.getBoundingClientRect();
+          state.mouseX = e.clientX - rect.left;
+          
+          if (state.isPanningCanvas) {
+            const dx = e.clientX - state.panStartX;
+            const dt = ((state.panStartT1 - state.panStartT0) / rect.width) * dx;
+            state.t_start = Math.max(0, state.panStartT0 - dt);
+            state.t_end = Math.min(state.T_total, state.panStartT1 - dt);
+            requestRender();
+            return;
+          }
+
+          requestRender();
+
+          // Tooltip on occurrences track
+          if (state.hoveredEvent) {
+            const ev = state.hoveredEvent;
+            const mInfo = state.manifest?.motifs?.[ev.motif] || {};
+            tooltip.style.display = "block";
+            tooltip.style.left = `${e.pageX + 12}px`;
+            tooltip.style.top = `${e.pageY + 12}px`;
+            document.getElementById("tt-dot").style.background = mInfo.color || "#388bfd";
+            document.getElementById("tt-title").textContent = `Motif ${ev.motif} Occurrence`;
+            document.getElementById("tt-body").innerHTML = `
+              Time (τ): ${ev.time.toFixed(4)}s<br>
+              Vigor (c): ${(ev.amp || 1.0).toFixed(2)}×<br>
+              Warp: ${(ev.warp || 0.0).toFixed(2)}<br>
+              Attributed: ${ev.obs || 0} spikes
+            `;
+          } else {
+            tooltip.style.display = "none";
+          }
+        });
+
+        cv.addEventListener("mouseleave", () => {
+          state.mouseX = -1;
+          tooltip.style.display = "none";
+          requestRender();
+        });
+
+        cv.addEventListener("mousedown", (e) => {
+          if (state.hoveredEvent) {
+            openDrawer(state.hoveredEvent);
+            return;
+          }
+          state.isPanningCanvas = true;
+          state.panStartX = e.clientX;
+          state.panStartT0 = state.t_start;
+          state.panStartT1 = state.t_end;
+        });
+
+        // Wheel zooming centered on cursor
+        cv.addEventListener("wheel", (e) => {
+          e.preventDefault();
+          const rect = cv.getBoundingClientRect();
+          const mouseFrac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+          const centerT = state.t_start + mouseFrac * (state.t_end - state.t_start);
+          const zoomFactor = e.deltaY > 0 ? 1.25 : 0.8;
+          const currentSpan = state.t_end - state.t_start;
+          const newSpan = Math.max(0.2, Math.min(state.T_total, currentSpan * zoomFactor));
+
+          state.t_start = Math.max(0, centerT - mouseFrac * newSpan);
+          state.t_end = Math.min(state.T_total, state.t_start + newSpan);
+          if (state.t_end - state.t_start < newSpan) {
+            state.t_start = Math.max(0, state.t_end - newSpan);
+          }
+          requestRender();
+        }, { passive: false });
+      });
+
+      // Keyboard shortcuts
+      window.addEventListener("keydown", (e) => {
+        const span = state.t_end - state.t_start;
+        if (e.key === "ArrowLeft") {
+          state.t_start = Math.max(0, state.t_start - span * 0.2);
+          state.t_end = Math.min(state.T_total, state.t_start + span);
+          requestRender();
+        } else if (e.key === "ArrowRight") {
+          state.t_end = Math.min(state.T_total, state.t_end + span * 0.2);
+          state.t_start = Math.max(0, state.t_end - span);
+          requestRender();
+        } else if (e.key === "+" || e.key === "=") {
+          const center = (state.t_start + state.t_end) / 2;
+          const newSpan = Math.max(0.2, span * 0.75);
+          state.t_start = Math.max(0, center - newSpan / 2);
+          state.t_end = Math.min(state.T_total, state.t_start + newSpan);
+          requestRender();
+        } else if (e.key === "-") {
+          const center = (state.t_start + state.t_end) / 2;
+          const newSpan = Math.min(state.T_total, span * 1.33);
+          state.t_start = Math.max(0, center - newSpan / 2);
+          state.t_end = Math.min(state.T_total, state.t_start + newSpan);
+          requestRender();
+        } else if (e.key === "Escape") {
+          closeDrawer();
+        }
+      });
+    }
+
+    // Start App
+    window.addEventListener("DOMContentLoaded", initExplorer);
+  </script>
+</body>
+</html>
