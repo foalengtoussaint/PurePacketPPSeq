@@ -84,6 +84,40 @@ if isfile(p_te)
     )
 end
 
+# 7. MOp-Only 100-Sweep Run (208 Units, 0–2114 s)
+p_mop_100 = "/home/foaleng/Documents/PurePacketPPSeq/scripts/checkpoint_pure_packet_mop_only_100sweeps.jls"
+if isfile(p_mop_100)
+    export_run(
+        p_mop_100, data_dir, joinpath(runs_dir, "lgcy0288_mop_only_100sweeps");
+        run_id="lgcy0288_mop_only_100sweeps",
+        run_name="Session lgcy0288 · MOp-Only 100 Sweeps (208 Units, 11 Motifs)",
+        channel_subset=mop_channels
+    )
+end
+
+# 8. CP-Only 100-Sweep Run (203 Units, 0–2114 s)
+p_cp_100 = "/home/foaleng/Documents/PurePacketPPSeq/scripts/checkpoint_pure_packet_cp_only_100sweeps.jls"
+if isfile(p_cp_100)
+    export_run(
+        p_cp_100, data_dir, joinpath(runs_dir, "lgcy0288_cp_only_100sweeps");
+        run_id="lgcy0288_cp_only_100sweeps",
+        run_name="Session lgcy0288 · CP-Only 100 Sweeps (203 Units, 16 Motifs)",
+        channel_subset=cp_channels
+    )
+end
+
+# 9. Actual Full-Session 100-Sweep Run (411 Units, 0–13,833 s, 3.84 hrs)
+p_full_100 = "/home/foaleng/Documents/PurePacketPPSeq/scripts/checkpoint_pure_packet_actual_full_session_100sweeps.jls"
+spikes_full_npz = "/home/foaleng/Downloads/mop_awake_ppseq/data/mop_basal_ganglia_all_clusters/spikes_full.npz"
+if isfile(p_full_100)
+    export_run(
+        p_full_100, data_dir, joinpath(runs_dir, "lgcy0288_actual_full_session_100sweeps");
+        run_id="lgcy0288_actual_full_session_100sweeps",
+        run_name="Session lgcy0288 · Actual Full Session 100 Sweeps (411 Units, 3.84 hrs)",
+        spikes_npz=spikes_full_npz
+    )
+end
+
 println("="^80)
 println("ALL MODERN ARCHITECTURE RUNS SUCCESSFULLY EXPORTED TO: $runs_dir")
 println("="^80)

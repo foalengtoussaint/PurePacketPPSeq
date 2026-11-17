@@ -24,7 +24,8 @@ function export_run(
     run_id::String="run",
     run_name::String="PPSeq Run",
     t_window::Union{Nothing, Tuple{Float64, Float64}}=nothing,
-    channel_subset::Union{Nothing, Vector{Int}, Set{Int}}=nothing
+    channel_subset::Union{Nothing, Vector{Int}, Set{Int}}=nothing,
+    spikes_npz::Union{Nothing, String}=nothing
 )
     mkpath(output_dir)
     println("="^75)
@@ -89,9 +90,10 @@ function export_run(
     end
 
     # 3. Load Spikes
-    raw_npz = npzread(joinpath(data_dir, "joint.npz"))
+    spikes_path = spikes_npz !== nothing ? spikes_npz : joinpath(data_dir, "joint.npz")
+    raw_npz = npzread(spikes_path)
     ts_all = Float64.(raw_npz["timestamp"])
-    ch_all = Int.(raw_npz["channel"])
+    ch_all = Int.(haskey(raw_npz, "channel") ? raw_npz["channel"] : raw_npz["neuron"])
 
     if t_window !== nothing
         t0, t1 = t_window

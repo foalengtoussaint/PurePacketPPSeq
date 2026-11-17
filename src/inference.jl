@@ -651,6 +651,7 @@ function fit!(
             )
             push!(model.energy_history, diag.joint_energy)
             print_diagnostics_row(diag)
+            flush(stdout)
 
             if sweep <= 2 || sweep % checkpoint_interval == 0
                 println(@sprintf("   --> [OU Gauge Diagnostic] mean(bg_rates)=%.4f Hz | x_reg=[%.3f, %.3f] | dx_cell=[%.3f, %.3f] | alpha_c=%.2f",
@@ -674,6 +675,7 @@ function fit!(
                 if !isempty(checkpoint_path)
                     persist_checkpoint!(checkpoint_path, model)
                 end
+                flush(stdout)
 
                 if sweep >= 25 && length(model.ks_history) >= 3
                     d1 = abs(model.ks_history[end].D_ks - model.ks_history[end-1].D_ks) / 5.0
