@@ -7,32 +7,39 @@
   <style>
     :root {
       --bg: #080c13;
-      --surface: #101622;
-      --surface-alt: #172030;
-      --surface-hover: #1f2b40;
+      --surface: #0f1523;
+      --surface-alt: #161e30;
+      --surface-hover: #1f2b44;
       --border: rgba(255, 255, 255, 0.08);
-      --border-focus: rgba(56, 139, 253, 0.6);
+      --border-focus: rgba(88, 166, 255, 0.6);
       --text: #f0f6fc;
       --text-muted: #8b949e;
       --text-subtle: #6e7681;
-      --primary: #388bfd;
-      --accent: #f0883e;
-      --mop: #388bfd;
-      --cp: #f0883e;
-      --beh: #10b981;
+      --primary: #58a6ff;
+      --accent: #ff9b54;
+      --mop: #58a6ff;
+      --cp: #ff9b54;
+      --beh: #3fb950;
       --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", Helvetica, Arial, sans-serif;
+    html, body {
       background: var(--bg);
       color: var(--text);
-      line-height: 1.45;
-      padding: 14px 20px 28px 20px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", Helvetica, Arial, sans-serif;
+      line-height: 1.4;
       user-select: none;
       -webkit-font-smoothing: antialiased;
       overflow-x: hidden;
+      min-height: 100vh;
+    }
+
+    body {
+      padding: 10px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
     }
 
     /* Top Navigation Header */
@@ -40,9 +47,8 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding-bottom: 12px;
+      padding-bottom: 6px;
       border-bottom: 1px solid var(--border);
-      margin-bottom: 12px;
       gap: 16px;
       flex-wrap: wrap;
     }
@@ -50,22 +56,22 @@
     .brand-group {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
     }
 
     .brand-badge {
-      background: linear-gradient(135deg, #2563eb, #7c3aed);
+      background: linear-gradient(135deg, #1f6feb, #8957e5);
       color: #fff;
       font-weight: 700;
       font-size: 11px;
-      padding: 3px 9px;
+      padding: 3px 8px;
       border-radius: 6px;
       letter-spacing: 0.5px;
       text-transform: uppercase;
     }
 
     .brand-title {
-      font-size: 18px;
+      font-size: 17px;
       font-weight: 600;
       letter-spacing: -0.2px;
     }
@@ -73,9 +79,9 @@
     .run-nav-group {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       background: var(--surface);
-      padding: 4px 8px;
+      padding: 3px 8px;
       border-radius: 8px;
       border: 1px solid var(--border);
     }
@@ -84,7 +90,7 @@
       background: var(--surface-alt);
       color: var(--text);
       border: 1px solid var(--border);
-      padding: 6px 12px;
+      padding: 5px 12px;
       border-radius: 6px;
       font-size: 13px;
       font-weight: 500;
@@ -98,7 +104,7 @@
       background: var(--surface-alt);
       color: var(--text);
       border: 1px solid var(--border);
-      padding: 6px 12px;
+      padding: 5px 10px;
       border-radius: 6px;
       font-size: 12px;
       font-weight: 500;
@@ -117,37 +123,35 @@
     .meta-banner {
       display: flex;
       align-items: center;
-      gap: 18px;
+      gap: 16px;
       background: var(--surface);
-      padding: 8px 14px;
-      border-radius: 8px;
+      padding: 6px 12px;
+      border-radius: 6px;
       border: 1px solid var(--border);
-      margin-bottom: 12px;
-      font-size: 12px;
+      font-size: 11.5px;
       color: var(--text-muted);
       overflow-x: auto;
     }
-    .meta-item { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-    .meta-val { color: var(--text); font-weight: 600; }
+    .meta-item { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+    .meta-val { color: var(--text); font-weight: 600; font-family: var(--font-mono); }
     .meta-sep { color: var(--text-subtle); }
 
     /* Controls Bar */
     .controls-bar {
       display: flex;
       align-items: center;
-      gap: 14px;
-      margin-bottom: 12px;
+      gap: 12px;
       flex-wrap: wrap;
     }
 
     .control-section {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 5px;
     }
 
     .control-label {
-      font-size: 11px;
+      font-size: 10.5px;
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.5px;
@@ -167,8 +171,8 @@
       background: transparent;
       border: none;
       color: var(--text-muted);
-      padding: 4px 10px;
-      font-size: 12px;
+      padding: 3px 9px;
+      font-size: 11.5px;
       font-weight: 500;
       cursor: pointer;
       border-radius: 9999px;
@@ -186,21 +190,21 @@
     .motif-chips {
       display: flex;
       align-items: center;
-      gap: 5px;
+      gap: 4px;
       flex-wrap: wrap;
     }
     .motif-chip {
       background: var(--surface);
       border: 1px solid var(--border);
       color: var(--text-muted);
-      padding: 3px 9px;
+      padding: 2px 7px;
       border-radius: 9999px;
-      font-size: 11px;
+      font-size: 10.5px;
       font-weight: 500;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
-      gap: 5px;
+      gap: 4px;
       transition: all 0.15s ease;
     }
     .motif-chip:hover { border-color: rgba(255, 255, 255, 0.3); color: var(--text); }
@@ -210,19 +214,18 @@
       border-color: rgba(255, 255, 255, 0.3);
     }
     .chip-dot {
-      width: 7px;
-      height: 7px;
+      width: 6px;
+      height: 6px;
       border-radius: 50%;
     }
 
     /* Scrubber Track */
     .scrubber-container {
       position: relative;
-      height: 26px;
+      height: 22px;
       background: var(--surface);
       border-radius: 6px;
       border: 1px solid var(--border);
-      margin-bottom: 12px;
       cursor: pointer;
       overflow: hidden;
     }
@@ -237,7 +240,7 @@
       position: absolute;
       top: 0;
       height: 100%;
-      background: rgba(56, 139, 253, 0.22);
+      background: rgba(88, 166, 255, 0.22);
       border-left: 2px solid var(--primary);
       border-right: 2px solid var(--primary);
       box-sizing: border-box;
@@ -245,55 +248,31 @@
     }
     .scrubber-viewport:active { cursor: grabbing; }
 
-    /* Main Multi-Track Work Area */
+    /* Main Unified Canvas Layout */
     .workarea-layout {
       display: flex;
-      gap: 14px;
+      gap: 12px;
       position: relative;
+      align-items: flex-start;
     }
 
-    .main-canvases-col {
+    .canvas-column {
       flex: 1;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
       min-width: 0;
-    }
-
-    .canvas-panel {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
-      position: relative;
       overflow: hidden;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+      position: relative;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
     }
 
-    .panel-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 6px 12px;
-      background: var(--surface-alt);
-      border-bottom: 1px solid var(--border);
-      font-size: 11px;
-      font-weight: 600;
-      color: var(--text-muted);
-      letter-spacing: 0.3px;
-    }
-
-    canvas.display-canvas {
+    #raster-canvas {
       display: block;
       width: 100%;
+      height: 560px; /* Locked explicit CSS height prevents aspect-ratio stretching */
       cursor: crosshair;
-    }
-
-    /* Time Axis Canvas */
-    .axis-canvas-container {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 2px 0;
+      background: #080c13;
     }
 
     /* Side Inspector Drawer */
@@ -304,9 +283,9 @@
       border-radius: 8px;
       display: none;
       flex-direction: column;
-      padding: 14px;
-      gap: 12px;
-      font-size: 12px;
+      padding: 12px;
+      gap: 10px;
+      font-size: 11.5px;
       flex-shrink: 0;
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
     }
@@ -316,12 +295,12 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding-bottom: 8px;
+      padding-bottom: 6px;
       border-bottom: 1px solid var(--border);
     }
     .drawer-title {
       font-weight: 600;
-      font-size: 13px;
+      font-size: 12.5px;
       display: flex;
       align-items: center;
       gap: 8px;
@@ -332,17 +311,18 @@
       color: var(--text-muted);
       cursor: pointer;
       font-size: 15px;
+      padding: 0 4px;
     }
     .btn-close:hover { color: var(--text); }
 
     .drawer-card {
       background: var(--surface-alt);
       border-radius: 6px;
-      padding: 10px;
+      padding: 8px 10px;
       border: 1px solid var(--border);
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 5px;
     }
     .card-row {
       display: flex;
@@ -353,34 +333,34 @@
     .card-val { color: var(--text); font-weight: 600; font-family: var(--font-mono); }
 
     .btn-drawer-zoom {
-      background: var(--primary);
+      background: #238636;
       color: #fff;
       border: none;
-      padding: 8px 12px;
+      padding: 7px 10px;
       border-radius: 6px;
       font-weight: 600;
-      font-size: 12px;
+      font-size: 11.5px;
       cursor: pointer;
-      margin-top: 4px;
+      margin-top: 2px;
       transition: background 0.15s ease;
     }
-    .btn-drawer-zoom:hover { background: #2563eb; }
+    .btn-drawer-zoom:hover { background: #2ea043; }
 
     /* Tooltip */
     .tooltip {
       position: absolute;
-      background: rgba(16, 22, 34, 0.96);
+      background: rgba(15, 21, 35, 0.96);
       border: 1px solid var(--border-focus);
       border-radius: 6px;
-      padding: 8px 12px;
-      font-size: 11px;
+      padding: 6px 10px;
+      font-size: 10.5px;
       color: var(--text);
       pointer-events: none;
       z-index: 100;
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
       display: none;
     }
-    .tooltip-title { font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+    .tooltip-title { font-weight: 600; margin-bottom: 3px; display: flex; align-items: center; gap: 6px; }
 
     /* Status Bar */
     .status-bar {
@@ -389,7 +369,6 @@
       align-items: center;
       font-size: 11px;
       color: var(--text-subtle);
-      margin-top: 10px;
       padding: 0 4px;
     }
   </style>
@@ -482,41 +461,10 @@
     <div id="scrubber-viewport" class="scrubber-viewport"></div>
   </div>
 
-  <!-- Main Multi-Track Work Area -->
+  <!-- Main Multi-Tier Unified Work Area -->
   <div class="workarea-layout">
-    <div class="main-canvases-col">
-
-      <!-- Track 1: Continuous Data Streams -->
-      <div class="canvas-panel" id="panel-streams">
-        <div class="panel-header">
-          <span>Continuous Data Streams (Level m=5 OU Arousal & Drift)</span>
-          <div id="streams-legend" style="display:flex; gap:12px;"></div>
-        </div>
-        <canvas id="streams-canvas" class="display-canvas" height="85"></canvas>
-      </div>
-
-      <!-- Track 2: Sequence Occurrences (Scale n=1 Marked Events) -->
-      <div class="canvas-panel" id="panel-events">
-        <div class="panel-header">
-          <span>Sequence Occurrences (Scale n=1 · Height ∝ Motor Vigor $\sqrt{c_e}$)</span>
-          <span id="events-count-badge">0 visible</span>
-        </div>
-        <canvas id="events-canvas" class="display-canvas" height="95"></canvas>
-      </div>
-
-      <!-- Track 3: Multi-Unit Spike Raster (Contiguous Anatomical Sorting) -->
-      <div class="canvas-panel" id="panel-raster">
-        <div class="panel-header">
-          <span>Multi-Unit Spike Raster (Scale n=0 Spikes · Depth-Ordered Contiguous Anatomy)</span>
-          <span id="spikes-count-badge">0 visible</span>
-        </div>
-        <canvas id="raster-canvas" class="display-canvas" height="440"></canvas>
-      </div>
-
-      <!-- Synchronized Time Ruler -->
-      <div class="axis-canvas-container">
-        <canvas id="axis-canvas" class="display-canvas" height="24"></canvas>
-      </div>
+    <div class="canvas-column" id="canvas-column">
+      <canvas id="raster-canvas"></canvas>
     </div>
 
     <!-- Side Inspector Drawer -->
@@ -551,20 +499,29 @@
   <!-- Tooltip Element -->
   <div class="tooltip" id="tooltip">
     <div class="tooltip-title">
-      <span id="tt-dot" style="width:8px; height:8px; border-radius:50%; background:#fff;"></span>
+      <span id="tt-dot" style="width:7px; height:7px; border-radius:50%; background:#fff;"></span>
       <span id="tt-title">Event</span>
     </div>
-    <div id="tt-body" style="font-family:var(--font-mono); font-size:10px; line-height:1.5;"></div>
+    <div id="tt-body" style="font-family:var(--font-mono); font-size:10px; line-height:1.4;"></div>
   </div>
 
   <!-- Bottom Status Bar -->
   <footer class="status-bar">
     <div id="status-viewport-text">Viewport: 0.00s – 30.00s (Span: 30.00s)</div>
-    <div>Click occurrence to isolate its spikes · Scroll wheel to zoom · Click-drag to pan</div>
+    <div>Click occurrence to isolate spikes · Scroll wheel to zoom · Click-drag to pan</div>
   </footer>
 
   <script>
-    // PurePacketPPSeq Model Explorer Core Application State
+    // Palette for motifs
+    const MOTIF_PALETTE = {
+      1: '#58a6ff', 2: '#ff9b54', 3: '#3fb950', 4: '#d29922',
+      5: '#bc8cff', 6: '#f778ba', 7: '#7ee787', 8: '#54aeff',
+      9: '#e3b341', 10: '#f0883e', 11: '#79c0ff', 12: '#ff7b72',
+      13: '#a5d6ff', 14: '#d2a8ff', 15: '#ffc680', 16: '#56d364',
+      17: '#388bfd', 18: '#ec6547', 19: '#b392f0', 20: '#ea6045'
+    };
+
+    // Core State
     const state = {
       manifest: null,
       events: [],
@@ -584,22 +541,32 @@
       panStartT0: 0,
       panStartT1: 30,
       mouseX: -1,
-      hoveredEvent: null
+      mouseY: -1,
+      hoveredEvent: null,
+      renderedOccurrences: []
     };
 
-    // Canvas references
     const scrubberCanvas = document.getElementById("scrubber-canvas");
     const scrubberViewport = document.getElementById("scrubber-viewport");
-    const streamsCanvas = document.getElementById("streams-canvas");
-    const eventsCanvas = document.getElementById("events-canvas");
     const rasterCanvas = document.getElementById("raster-canvas");
-    const axisCanvas = document.getElementById("axis-canvas");
+    const canvasColumn = document.getElementById("canvas-column");
     const tooltip = document.getElementById("tooltip");
 
-    // Initialize & Fetch Runs List
+    // Fast binary search
+    function searchSorted(arr, val) {
+      let low = 0, high = arr.length;
+      while (low < high) {
+        const mid = (low + high) >>> 1;
+        if (arr[mid] < val) low = mid + 1;
+        else high = mid;
+      }
+      return low;
+    }
+
     async function initExplorer() {
       setupEventListeners();
       await fetchAvailableRuns();
+      handleUrlParams();
     }
 
     async function fetchAvailableRuns() {
@@ -619,8 +586,13 @@
             opt.textContent = `${r.name} (${r.duration}s)`;
             select.appendChild(opt);
           });
-          // Load first run by default
-          loadRun(runs[0].id);
+
+          // Check if specific run is requested via URL
+          const urlParams = new URLSearchParams(window.location.search);
+          const runParam = urlParams.get("run");
+          const initialRun = (runParam && runs.some(r => r.id === runParam)) ? runParam : runs[0].id;
+          select.value = initialRun;
+          await loadRun(initialRun);
         } else {
           select.innerHTML = '<option value="">Server offline (use Open Folder)</option>';
         }
@@ -644,6 +616,32 @@
       }
     }
 
+    function handleUrlParams() {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.has("t0") && urlParams.has("t1")) {
+        state.t_start = Math.max(0, parseFloat(urlParams.get("t0")));
+        state.t_end = Math.min(state.T_total, parseFloat(urlParams.get("t1")));
+      }
+      if (urlParams.has("hl")) {
+        setHighlightMode(urlParams.get("hl"));
+      }
+      if (urlParams.has("motif")) {
+        const m = parseInt(urlParams.get("motif"));
+        if (!isNaN(m)) {
+          state.activeMotifId = m;
+          setHighlightMode("motif");
+        }
+      }
+      if (urlParams.has("event")) {
+        const evId = parseInt(urlParams.get("event"));
+        const targetEv = state.events.find(e => e.id === evId);
+        if (targetEv) {
+          openDrawer(targetEv);
+        }
+      }
+      requestRender();
+    }
+
     function applyLoadedData(manifest, events, streams, spikes) {
       state.manifest = manifest;
       state.events = events;
@@ -664,15 +662,14 @@
 
       motifIds.forEach(mId => {
         state.activeMotifs.add(mId);
-        const mInfo = manifest.motifs[mId];
+        const color = MOTIF_PALETTE[mId] || manifest.motifs[mId]?.color || '#58a6ff';
         const chip = document.createElement("button");
         chip.className = "motif-chip active";
         chip.dataset.mid = mId;
-        chip.innerHTML = `<span class="chip-dot" style="background:${mInfo.color || '#388bfd'};"></span> M${mId}`;
+        chip.innerHTML = `<span class="chip-dot" style="background:${color};"></span> M${mId}`;
         
         chip.onclick = (e) => {
           if (e.shiftKey) {
-            // Shift-click: toggle visibility
             if (state.activeMotifs.has(mId)) {
               state.activeMotifs.delete(mId);
               chip.classList.remove("active");
@@ -681,7 +678,6 @@
               chip.classList.add("active");
             }
           } else {
-            // Normal click: set as active motif for highlight
             state.activeMotifId = mId;
             setHighlightMode("motif");
           }
@@ -690,7 +686,7 @@
         chipContainer.appendChild(chip);
       });
 
-      // Region filters setup: add Behavior button if behavior exists
+      // Region filters setup
       const regFilters = document.getElementById("region-filters");
       const existingBehBtn = regFilters.querySelector("[data-reg='Behavior']");
       if (manifest.regions?.Behavior && !existingBehBtn) {
@@ -708,21 +704,6 @@
         regFilters.appendChild(behBtn);
       } else if (!manifest.regions?.Behavior && existingBehBtn) {
         existingBehBtn.remove();
-      }
-
-      // Streams Legend
-      const legContainer = document.getElementById("streams-legend");
-      legContainer.innerHTML = "";
-      if (streams && streams.streams) {
-        streams.streams.forEach(s => {
-          const item = document.createElement("div");
-          item.style.display = "flex";
-          item.style.alignItems = "center";
-          item.style.gap = "5px";
-          item.style.fontSize = "10px";
-          item.innerHTML = `<span style="width:8px; height:8px; border-radius:50%; background:${s.color};"></span><span>${s.label}</span>`;
-          legContainer.appendChild(item);
-        });
       }
 
       // Update Banner
@@ -782,13 +763,14 @@
       }
     };
 
-    // Scrubber Overview Rendering
+    // Scrubber Overview
     function renderScrubberOverview() {
       const ctx = scrubberCanvas.getContext("2d");
       const dpr = window.devicePixelRatio || 1;
       const rect = scrubberCanvas.getBoundingClientRect();
       scrubberCanvas.width = rect.width * dpr;
       scrubberCanvas.height = rect.height * dpr;
+      ctx.resetTransform();
       ctx.scale(dpr, dpr);
 
       const W = rect.width;
@@ -809,7 +791,7 @@
       for (let i = 0; i < nBins; i++) if (bins[i] > maxBin) maxBin = bins[i];
 
       const binW = W / nBins;
-      ctx.fillStyle = "rgba(56, 139, 253, 0.45)";
+      ctx.fillStyle = "rgba(88, 166, 255, 0.45)";
       for (let i = 0; i < nBins; i++) {
         const h = (bins[i] / maxBin) * (H - 4);
         ctx.fillRect(i * binW, H - h - 1, Math.max(1, binW - 0.5), h);
@@ -830,340 +812,434 @@
       scrubberViewport.style.width = `${widthPx}px`;
     }
 
-    // High Performance 60-FPS Viewport Rendering
+    // High Performance Unified 60-FPS Viewport Rendering
     let renderRequested = false;
     function requestRender() {
       if (!renderRequested) {
         renderRequested = true;
-        requestAnimationFrame(renderAllCanvases);
+        requestAnimationFrame(renderUnifiedView);
       }
     }
 
-    function renderAllCanvases() {
+    function renderUnifiedView() {
       renderRequested = false;
-      renderStreamsTrack();
-      renderEventsTrack();
-      renderRasterTrack();
-      renderAxisTrack();
-      updateScrubberViewportBox();
-      updateStatusDisplay();
-    }
-
-    function setupCanvasDpr(canvas) {
       const dpr = window.devicePixelRatio || 1;
-      const rect = canvas.getBoundingClientRect();
-      const targetW = Math.round(rect.width * dpr);
-      const targetH = Math.round(rect.height * dpr);
-      if (canvas.width !== targetW || canvas.height !== targetH) {
-        canvas.width = targetW;
-        canvas.height = targetH;
+      const w = canvasColumn.clientWidth;
+      const h = 560; // Explicit fixed canvas height
+
+      if (rasterCanvas.width !== Math.round(w * dpr) || rasterCanvas.height !== Math.round(h * dpr)) {
+        rasterCanvas.width = Math.round(w * dpr);
+        rasterCanvas.height = Math.round(h * dpr);
+        rasterCanvas.style.width = w + "px";
+        rasterCanvas.style.height = h + "px";
       }
-      const ctx = canvas.getContext("2d");
+
+      const ctx = rasterCanvas.getContext("2d");
       ctx.resetTransform();
       ctx.scale(dpr, dpr);
-      return { ctx, width: rect.width, height: rect.height };
-    }
+      ctx.clearRect(0, 0, w, h);
 
-    // Track 1: Streams
-    function renderStreamsTrack() {
-      const { ctx, width, height } = setupCanvasDpr(streamsCanvas);
-      ctx.clearRect(0, 0, width, height);
-
-      if (!state.streams || !state.streams.streams) return;
+      const padL = 72, padR = 24; // Generous left gutter for clean anatomical tags & motif labels
+      const plotW = w - padL - padR;
 
       const t0 = state.t_start;
       const t1 = state.t_end;
-      const dt = t1 - t0;
-      if (dt <= 0) return;
+      const tSpan = t1 - t0;
+      if (tSpan <= 0) return;
 
-      // Draw zero axis line
-      const zeroY = height * 0.5;
+      // Vertical Layout Heights
+      const padT_streams = 8,  h_streams = 42;
+      const padT_motif   = 56;
+      
+      const activeMotifRows = Array.from(state.activeMotifs).sort((a, b) => a - b);
+      const rowH = activeMotifRows.length > 0 ? Math.min(18, Math.max(6.0, 95 / activeMotifRows.length)) : 10;
+      const h_motif = Math.max(60, activeMotifRows.length * rowH);
+
+      const padT_spike   = padT_motif + h_motif + 16;
+      const padT_beh     = h - 42, h_beh = 18;
+      const padT_axis    = h - 22, h_axis = 18;
+      const h_spike      = padT_beh - padT_spike - 8;
+
+      // -------------------------------------------------------------
+      // 1. CONTINUOUS DATA STREAMS (OU Arousal x_MOp & x_CP)
+      // -------------------------------------------------------------
+      ctx.fillStyle = "rgba(255, 255, 255, 0.015)";
+      ctx.fillRect(padL, padT_streams, plotW, h_streams);
+
+      // Gutter Label & Zero Line
+      ctx.fillStyle = "#6e7681";
+      ctx.font = "bold 9px ui-monospace, monospace";
+      ctx.textAlign = "right";
+      ctx.fillText("OU STREAMS", padL - 8, padT_streams + 24);
+      ctx.textAlign = "left";
+
+      const zeroY = padT_streams + h_streams * 0.5;
       ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(0, zeroY);
-      ctx.lineTo(width, zeroY);
+      ctx.moveTo(padL, zeroY);
+      ctx.lineTo(w - padR, zeroY);
       ctx.stroke();
 
-      const timeArr = state.streams.time;
-      if (!timeArr || timeArr.length === 0) return;
+      // Legend in top-right of streams
+      let legX = w - padR - 10;
+      ctx.font = "9px -apple-system, system-ui";
+      ctx.textAlign = "right";
+      ctx.fillStyle = "#ff9b54";
+      ctx.fillText("CP (l=0.9s)", legX, padT_streams + 11);
+      legX -= 72;
+      ctx.fillStyle = "#58a6ff";
+      ctx.fillText("MOp (l=0.5s)", legX, padT_streams + 11);
+      ctx.textAlign = "left";
 
-      // Plot each continuous stream
-      state.streams.streams.forEach(s => {
-        const data = s.data;
-        if (!data || data.length === 0) return;
+      // Plot continuous streams
+      if (state.streams && state.streams.streams && state.streams.time) {
+        const timeArr = state.streams.time;
+        state.streams.streams.forEach(s => {
+          const data = s.data;
+          if (!data || data.length === 0) return;
+          ctx.strokeStyle = s.color || "#58a6ff";
+          ctx.lineWidth = 1.6;
+          ctx.beginPath();
+          let started = false;
 
-        ctx.strokeStyle = s.color || "#388bfd";
-        ctx.lineWidth = 1.8;
-        ctx.beginPath();
-        let started = false;
+          for (let i = 0; i < timeArr.length; i++) {
+            const t = timeArr[i];
+            if (t < t0 - 0.5) continue;
+            if (t > t1 + 0.5) break;
 
-        for (let i = 0; i < timeArr.length; i++) {
-          const t = timeArr[i];
-          if (t < t0 - 0.5) continue;
-          if (t > t1 + 0.5) break;
+            const x = padL + ((t - t0) / tSpan) * plotW;
+            const val = data[i];
+            const y = zeroY - (val / 1.5) * (h_streams * 0.42);
 
-          const x = ((t - t0) / dt) * width;
-          const val = data[i];
-          const y = zeroY - (val / 1.5) * (height * 0.42);
-
-          if (!started) {
-            ctx.moveTo(x, y);
-            started = true;
-          } else {
-            ctx.lineTo(x, y);
+            if (!started) {
+              ctx.moveTo(x, y);
+              started = true;
+            } else {
+              ctx.lineTo(x, y);
+            }
           }
-        }
+          ctx.stroke();
+        });
+      }
+
+      // Divider below streams
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
+      ctx.beginPath();
+      ctx.moveTo(padL, padT_motif - 4);
+      ctx.lineTo(w - padR, padT_motif - 4);
+      ctx.stroke();
+
+      // -------------------------------------------------------------
+      // 2. LEVEL 1 · SEQUENCE MOTIF SPIKES (Occurrences as Marked Spikes)
+      // -------------------------------------------------------------
+      ctx.fillStyle = "rgba(255, 255, 255, 0.015)";
+      ctx.fillRect(padL, padT_motif, plotW, h_motif);
+
+      // Section header badge inside track top-left
+      ctx.fillStyle = "rgba(255, 255, 255, 0.35)";
+      ctx.font = "bold 8.5px -apple-system, system-ui";
+      ctx.fillText("LEVEL 1 · SEQUENCE MOTIF SPIKES (E₁ AMPLITUDE ∝ √cₑ)", padL + 8, padT_motif + 10);
+
+      const rowYMap = {};
+      activeMotifRows.forEach((mid, idx) => {
+        const ry = padT_motif + idx * rowH;
+        rowYMap[mid] = ry;
+        const baseY = ry + rowH - 1.5;
+
+        // Baseline track
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.06)";
+        ctx.lineWidth = 1.0;
+        ctx.beginPath();
+        ctx.moveTo(padL, baseY);
+        ctx.lineTo(w - padR, baseY);
         ctx.stroke();
+
+        // Right-aligned motif label in left gutter (clean column alignment)
+        const color = MOTIF_PALETTE[mid] || "#8b949e";
+        ctx.fillStyle = color;
+        ctx.font = `bold ${Math.max(7.5, Math.min(9.5, rowH * 0.72))}px ui-monospace, monospace`;
+        ctx.textAlign = "right";
+        ctx.fillText(`M${mid}`, padL - 8, ry + rowH * 0.72);
       });
+      ctx.textAlign = "left";
 
-      drawCrosshair(ctx, width, height);
-    }
-
-    // Track 2: Occurrences (Scale n=1 Marked Sequence Events)
-    function renderEventsTrack() {
-      const { ctx, width, height } = setupCanvasDpr(eventsCanvas);
-      ctx.clearRect(0, 0, width, height);
-
-      const t0 = state.t_start;
-      const t1 = state.t_end;
-      const dt = t1 - t0;
-      if (dt <= 0) return;
-
-      let visibleCount = 0;
+      // Render Sequence Occurrences as crisp vertical spike ticks
+      state.renderedOccurrences = [];
       state.hoveredEvent = null;
 
-      // Occurrences stem / capsule glyphs
-      state.events.forEach(ev => {
-        if (!state.activeMotifs.has(ev.motif)) return;
-        if (ev.time < t0 - 0.5 || ev.time > t1 + 0.5) return;
+      if (state.events && state.events.length > 0) {
+        const isCloseZoom = tSpan < 2.5;
+        const isMediumZoom = tSpan < 15.0;
+        const motifSpikeW = isCloseZoom ? 2.5 : (isMediumZoom ? 1.8 : 1.2);
+        const sel = state.selectedEvent;
 
-        visibleCount++;
-        const x = ((ev.time - t0) / dt) * width;
-        const mInfo = state.manifest?.motifs?.[ev.motif] || {};
-        const color = mInfo.color || "#388bfd";
-        const isSelected = state.selectedEvent && state.selectedEvent.id === ev.id;
+        for (let i = 0; i < state.events.length; i++) {
+          const ev = state.events[i];
+          if (!state.activeMotifs.has(ev.motif)) continue;
+          if (ev.time < t0 - 1.0 || ev.time > t1 + 1.0) continue;
 
-        // Vigor height sqrt scaling matching original explorer
-        const normAmp = Math.min(2.5, Math.max(0.15, Math.sqrt(ev.amp || 1.0)));
-        const glyphH = normAmp * (height * 0.55);
-        const yTop = height - glyphH - 8;
+          const ry = rowYMap[ev.motif];
+          if (ry === undefined) continue;
 
-        // Stem
-        ctx.strokeStyle = isSelected ? "#ffffff" : color;
-        ctx.lineWidth = isSelected ? 3 : 1.8;
-        ctx.beginPath();
-        ctx.moveTo(x, height - 2);
-        ctx.lineTo(x, yTop);
-        ctx.stroke();
+          const baseY = ry + rowH - 1.5;
+          const ex = padL + ((ev.time - t0) / tSpan) * plotW;
+          const isSelected = sel && sel.id === ev.id;
+          const color = MOTIF_PALETTE[ev.motif] || "#58a6ff";
 
-        // Top bulb / needle
-        if (isSelected) {
-          ctx.save();
-          ctx.shadowColor = color;
-          ctx.shadowBlur = 10;
-          ctx.fillStyle = "#ffffff";
-          ctx.beginPath();
-          ctx.arc(x, yTop, 5.0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.restore();
-        } else {
-          ctx.fillStyle = color;
-          ctx.beginPath();
-          ctx.arc(x, yTop, 3.5, 0, Math.PI * 2);
-          ctx.fill();
+          // Motor vigor sqrt scaling
+          const normAmp = Math.min(1.0, Math.max(0.12, Math.sqrt(ev.amp || 1.0) / 1.5));
+          const maxSpkH = Math.max(3.5, rowH - 2.5);
+          const spikeH = Math.max(2.5, normAmp * maxSpkH);
+          const topY = baseY - spikeH;
+
+          // Record rendered hit box for click detection
+          state.renderedOccurrences.push({
+            event: ev,
+            x: ex,
+            y: topY,
+            w: Math.max(8, motifSpikeW + 4),
+            h: spikeH + 4,
+            baseY: baseY,
+            color: color
+          });
+
+          if (isSelected) {
+            // Selected occurrence: glowing white needle + vertical guide needle through raster
+            ctx.save();
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 8;
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(ex - 1.5, topY - 2, 3.0, spikeH + 2);
+            ctx.restore();
+
+            // Dashed needle drop line shooting down into raster
+            ctx.save();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([3, 3]);
+            ctx.beginPath();
+            ctx.moveTo(ex, baseY);
+            ctx.lineTo(ex, padT_spike + h_spike);
+            ctx.stroke();
+            ctx.restore();
+          } else {
+            // Standard occurrence spike tick
+            ctx.fillStyle = color;
+            ctx.fillRect(ex - motifSpikeW / 2, topY, motifSpikeW, spikeH);
+          }
+
+          // Check mouse hover
+          if (Math.abs(state.mouseX - ex) < 6 && state.mouseY >= ry && state.mouseY <= baseY + 3) {
+            state.hoveredEvent = ev;
+          }
         }
+      }
 
-        // Check hover
-        if (Math.abs(state.mouseX - x) < 6) {
-          state.hoveredEvent = ev;
-        }
-      });
+      // Divider below motif tier
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
+      ctx.beginPath();
+      ctx.moveTo(padL, padT_spike - 5);
+      ctx.lineTo(w - padR, padT_spike - 5);
+      ctx.stroke();
 
-      document.getElementById("events-count-badge").textContent = `${visibleCount} visible`;
-      drawCrosshair(ctx, width, height);
-    }
-
-    // Track 3: Raster (Multi-Unit Spike Raster with Contiguous Anatomy and Highlighting)
-    function renderRasterTrack() {
-      const { ctx, width, height } = setupCanvasDpr(rasterCanvas);
-      ctx.clearRect(0, 0, width, height);
-
-      const t0 = state.t_start;
-      const t1 = state.t_end;
-      const dt = t1 - t0;
-      if (dt <= 0 || !state.spikes) return;
+      // -------------------------------------------------------------
+      // 3. LEVEL 0 · MULTI-UNIT SPIKE RASTER (Depth-Ordered Contiguous Anatomy)
+      // -------------------------------------------------------------
+      ctx.fillStyle = "rgba(255, 255, 255, 0.012)";
+      ctx.fillRect(padL, padT_spike, plotW, h_spike);
 
       const N_units = state.manifest?.n_units || 411;
-      const divRank = state.manifest?.divider_rank || Math.floor(N_units * 0.5);
+      const divRank = state.manifest?.divider_rank || 208;
       const neuralDivRank = state.manifest?.neural_divider_rank || N_units;
+
+      // Anatomical gutter labels (MOp and CP)
+      const mopMidY = padT_spike + (divRank / N_units) * h_spike * 0.5;
+      ctx.textAlign = "right";
+      ctx.fillStyle = "#58a6ff";
+      ctx.font = "bold 11px -apple-system, system-ui";
+      ctx.fillText("MOp", padL - 8, mopMidY - 3);
+      ctx.fillStyle = "#8b949e";
+      ctx.font = "8.5px ui-monospace, monospace";
+      ctx.fillText("208 u", padL - 8, mopMidY + 9);
+
+      // Region dividing dashed line (between MOp and CP)
+      const sepY = padT_spike + (divRank / N_units) * h_spike;
+      if (state.regionFilter === "all") {
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(padL, sepY);
+        ctx.lineTo(w - padR, sepY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // CP gutter label
+      const cpMidY = sepY + ((neuralDivRank - divRank) / N_units) * h_spike * 0.5;
+      ctx.fillStyle = "#ff9b54";
+      ctx.font = "bold 11px -apple-system, system-ui";
+      ctx.fillText("CP", padL - 8, cpMidY - 3);
+      ctx.fillStyle = "#8b949e";
+      ctx.font = "8.5px ui-monospace, monospace";
+      ctx.fillText("203 u", padL - 8, cpMidY + 9);
+      ctx.textAlign = "left";
+
+      // Inside track section badges
+      ctx.fillStyle = "rgba(88, 166, 255, 0.85)";
+      ctx.font = "bold 9px -apple-system, system-ui";
+      ctx.fillText("Motor Cortex (MOp) · 208 Units Sorted by Depth", padL + 8, padT_spike + 13);
+
+      ctx.fillStyle = "rgba(255, 155, 84, 0.85)";
+      ctx.fillText("Dorsal Striatum (CP) · 203 Units Sorted by Depth", padL + 8, sepY + 13);
 
       const sel = state.selectedEvent;
       const hlMode = state.highlightMode;
 
-      // Draw shaded occurrence footprint window behind spikes if an event is selected
+      // Shaded temporal footprint window behind spikes if an event is selected
       if (sel) {
         const warp = sel.warp || 1.0;
         const winT0 = sel.time - 0.50 * warp;
         const winT1 = sel.time + 0.50 * warp;
-        const bandX0 = ((winT0 - t0) / dt) * width;
-        const bandX1 = ((winT1 - t0) / dt) * width;
+        const bandX0 = padL + ((winT0 - t0) / tSpan) * plotW;
+        const bandX1 = padL + ((winT1 - t0) / tSpan) * plotW;
         const bW = Math.max(2, bandX1 - bandX0);
-        const mInfo = state.manifest?.motifs?.[sel.motif] || {};
-        
-        ctx.fillStyle = mInfo.color || "#388bfd";
-        ctx.globalAlpha = 0.08;
-        ctx.fillRect(Math.max(0, bandX0), 0, Math.min(width, bW), height);
+        const mColor = MOTIF_PALETTE[sel.motif] || "#58a6ff";
 
-        // Dashed drop guideline
-        const selX = ((sel.time - t0) / dt) * width;
-        ctx.strokeStyle = mInfo.color || "#388bfd";
-        ctx.globalAlpha = 0.5;
-        ctx.setLineDash([3, 3]);
-        ctx.beginPath();
-        ctx.moveTo(selX, 0);
-        ctx.lineTo(selX, height);
-        ctx.stroke();
-        ctx.setLineDash([]);
+        ctx.fillStyle = mColor;
+        ctx.globalAlpha = 0.08;
+        ctx.fillRect(Math.max(padL, bandX0), padT_spike, Math.min(plotW - Math.max(0, bandX0 - padL), bW), h_spike);
         ctx.globalAlpha = 1.0;
       }
 
-      // Draw Anatomical Divider Lines (MOp / CP contiguous boundary)
-      if (state.regionFilter === "all") {
-        const divY = (divRank / N_units) * height;
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
-        ctx.setLineDash([4, 4]);
-        ctx.beginPath();
-        ctx.moveTo(0, divY);
-        ctx.lineTo(width, divY);
-        ctx.stroke();
-        ctx.setLineDash([]);
+      // Draw Neural Spikes
+      if (state.spikes && state.spikes.t && state.spikes.t.length > 0) {
+        const ts = state.spikes.t;
+        const ranks = state.spikes.r;
+        const evs = state.spikes.ev;
+        const ms = state.spikes.m;
 
-        // Region Anatomical Tags
-        ctx.fillStyle = "rgba(56, 139, 253, 0.75)";
-        ctx.font = "bold 10px sans-serif";
-        ctx.fillText("Motor Cortex (MOp, 208 units)", 8, 14);
-        ctx.fillStyle = "rgba(240, 136, 62, 0.75)";
-        ctx.fillText("Dorsal Striatum (CP, 203 units)", 8, divY + 14);
+        const idx0 = searchSorted(ts, t0 - 0.1);
+        const idx1 = searchSorted(ts, t1 + 0.1);
 
-        if (neuralDivRank < N_units) {
-          const behY = (neuralDivRank / N_units) * height;
-          ctx.strokeStyle = "rgba(16, 185, 129, 0.25)";
-          ctx.setLineDash([3, 3]);
-          ctx.beginPath();
-          ctx.moveTo(0, behY);
-          ctx.lineTo(width, behY);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.fillStyle = "rgba(16, 185, 129, 0.85)";
-          ctx.fillText("Task Pokes & Reward (15 channels)", 8, behY + 12);
-        }
-      }
+        const isCloseZoom = tSpan < 2.5;
+        const isMediumZoom = tSpan < 15.0;
+        const spikeW = isCloseZoom ? 2.5 : (isMediumZoom ? 1.8 : 1.2);
+        const spikeH = isCloseZoom ? 4.8 : (isMediumZoom ? 3.4 : 2.2);
 
-      // Draw spikes
-      const ts = state.spikes.t;
-      const ranks = state.spikes.r;
-      const evs = state.spikes.ev;
-      const ms = state.spikes.m;
-      const nSpk = ts.length;
+        // First pass: Background spikes
+        for (let i = idx0; i < idx1; i++) {
+          const t = ts[i];
+          if (t < t0 || t > t1) continue;
 
-      const isCloseZoom = dt < 3.0;
-      const isMediumZoom = dt < 15.0;
-      const spikeW = isCloseZoom ? 2.5 : (isMediumZoom ? 1.8 : 1.2);
-      const spikeH = isCloseZoom ? 4.5 : (isMediumZoom ? 3.2 : 2.0);
+          const rank = ranks[i];
+          const isMop = rank < divRank;
+          const isCp  = rank >= divRank && rank < neuralDivRank;
+          const isBeh = rank >= neuralDivRank;
 
-      let visibleSpikes = 0;
+          if (state.regionFilter === "MOp" && !isMop) continue;
+          if (state.regionFilter === "CP" && !isCp) continue;
+          if (state.regionFilter === "Behavior" && !isBeh) continue;
 
-      // Determine pass logic:
-      // When highlighting an active event, draw dimmed background spikes first, then draw foreground spikes vividly on top!
-      for (let i = 0; i < nSpk; i++) {
-        const t = ts[i];
-        if (t < t0 || t > t1) continue;
+          const x = padL + ((t - t0) / tSpan) * plotW;
+          const y = padT_spike + (rank / N_units) * h_spike;
 
-        const rank = ranks[i];
-        const isMop = rank < divRank;
-        const isCp  = rank >= divRank && rank < neuralDivRank;
-        const isBeh = rank >= neuralDivRank;
+          const evId = evs[i];
+          const mId  = ms[i];
 
-        if (state.regionFilter === "MOp" && !isMop) continue;
-        if (state.regionFilter === "CP" && !isCp) continue;
-        if (state.regionFilter === "Behavior" && !isBeh) continue;
-
-        visibleSpikes++;
-        const x = ((t - t0) / dt) * width;
-        const y = (rank / N_units) * height;
-
-        const evId = evs[i];
-        const mId  = ms[i];
-
-        // Highlighting Logic
-        if (hlMode === "selected" && sel) {
-          if (evId === sel.id) {
-            // Foreground Attributed Spike!
-            const mInfo = state.manifest?.motifs?.[sel.motif] || {};
-            ctx.globalAlpha = 1.0;
-            ctx.fillStyle = mInfo.color || "#388bfd";
-            ctx.fillRect(x - (spikeW + 0.8) / 2, y - (spikeH + 1.2) / 2, spikeW + 0.8, spikeH + 1.2);
-            if (isCloseZoom) {
-              ctx.fillStyle = "#ffffff";
-              ctx.fillRect(x - 0.5, y - (spikeH / 2), 1.0, spikeH);
+          if (hlMode === "selected" && sel) {
+            // In selected mode, only draw non-attributed spikes in this pass
+            if (evId !== sel.id) {
+              ctx.globalAlpha = 0.08;
+              ctx.fillStyle = isMop ? "#58a6ff" : "#ff9b54";
+              ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
+            }
+          } else if (hlMode === "motif") {
+            if (mId === state.activeMotifId) {
+              ctx.globalAlpha = 1.0;
+              ctx.fillStyle = MOTIF_PALETTE[mId] || "#58a6ff";
+              ctx.fillRect(x - (spikeW + 0.6) / 2, y - (spikeH + 1.2) / 2, spikeW + 0.6, spikeH + 1.2);
+            } else {
+              ctx.globalAlpha = 0.08;
+              ctx.fillStyle = isMop ? "#58a6ff" : "#ff9b54";
+              ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
+            }
+          } else if (hlMode === "all_motifs") {
+            if (mId > 0) {
+              ctx.globalAlpha = 0.95;
+              ctx.fillStyle = MOTIF_PALETTE[mId] || "#58a6ff";
+              ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
+            } else {
+              ctx.globalAlpha = 0.06;
+              ctx.fillStyle = "#484f58";
+              ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
             }
           } else {
-            // Dimmed background spike
-            ctx.globalAlpha = 0.08;
-            ctx.fillStyle = isBeh ? "var(--beh)" : (isMop ? "var(--mop)" : "var(--cp)");
+            // Anatomical mode
+            ctx.globalAlpha = isCloseZoom ? 0.95 : 0.85;
+            ctx.fillStyle = isBeh ? "var(--beh)" : (isMop ? "#58a6ff" : "#ff9b54");
             ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
           }
-        } else if (hlMode === "motif") {
-          if (mId === state.activeMotifId) {
-            const mInfo = state.manifest?.motifs?.[mId] || {};
-            ctx.globalAlpha = 1.0;
-            ctx.fillStyle = mInfo.color || "#388bfd";
-            ctx.fillRect(x - (spikeW + 0.6) / 2, y - (spikeH + 1.0) / 2, spikeW + 0.6, spikeH + 1.0);
-          } else {
-            ctx.globalAlpha = 0.08;
-            ctx.fillStyle = isBeh ? "var(--beh)" : (isMop ? "var(--mop)" : "var(--cp)");
-            ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
+        }
+
+        // Second pass: Highlighted Foreground Attributed Spikes (rendered on top!)
+        if (hlMode === "selected" && sel) {
+          const aSpikeW = Math.max(2.8, spikeW + 1.2);
+          const aSpikeH = Math.max(4.5, spikeH + 1.8);
+          const mColor = MOTIF_PALETTE[sel.motif] || "#58a6ff";
+
+          for (let i = idx0; i < idx1; i++) {
+            const evId = evs[i];
+            if (evId === sel.id) {
+              const t = ts[i];
+              const rank = ranks[i];
+              const isMop = rank < divRank;
+              if (state.regionFilter === "MOp" && !isMop) continue;
+              if (state.regionFilter === "CP" && isMop) continue;
+
+              const ax = padL + ((t - t0) / tSpan) * plotW;
+              const ay = padT_spike + (rank / N_units) * h_spike;
+
+              ctx.globalAlpha = 1.0;
+              ctx.fillStyle = mColor;
+              ctx.fillRect(ax - aSpikeW / 2, ay - aSpikeH / 2, aSpikeW, aSpikeH);
+
+              // Glowing needle core on close zoom
+              if (isCloseZoom) {
+                ctx.fillStyle = "#ffffff";
+                ctx.fillRect(ax - 0.5, ay - aSpikeH / 2, 1.0, aSpikeH);
+              }
+            }
           }
-        } else if (hlMode === "all_motifs") {
-          if (mId > 0 && state.manifest?.motifs?.[mId]) {
-            const mInfo = state.manifest.motifs[mId];
-            ctx.globalAlpha = 0.95;
-            ctx.fillStyle = mInfo.color || "#388bfd";
-            ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
-          } else {
-            // Pure Poisson noise
-            ctx.globalAlpha = 0.07;
-            ctx.fillStyle = "#8b949e";
-            ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
-          }
-        } else {
-          // Anatomical Default Mode
-          ctx.globalAlpha = isCloseZoom ? 0.9 : 0.75;
-          if (isBeh) ctx.fillStyle = "var(--beh)";
-          else if (isMop) ctx.fillStyle = "var(--mop)";
-          else ctx.fillStyle = "var(--cp)";
-          ctx.fillRect(x - spikeW / 2, y - spikeH / 2, spikeW, spikeH);
         }
       }
 
       ctx.globalAlpha = 1.0;
-      document.getElementById("spikes-count-badge").textContent = `${visibleSpikes.toLocaleString()} spikes`;
-      drawCrosshair(ctx, width, height);
-    }
 
-    // Time Axis Ruler
-    function renderAxisTrack() {
-      const { ctx, width, height } = setupCanvasDpr(axisCanvas);
-      ctx.clearRect(0, 0, width, height);
+      // -------------------------------------------------------------
+      // 4. BEHAVIORAL POKES & REWARD (If Available)
+      // -------------------------------------------------------------
+      ctx.fillStyle = "rgba(255, 255, 255, 0.015)";
+      ctx.fillRect(padL, padT_beh, plotW, h_beh);
 
-      const t0 = state.t_start;
-      const t1 = state.t_end;
-      const dt = t1 - t0;
-      if (dt <= 0) return;
+      ctx.textAlign = "right";
+      ctx.fillStyle = "#3fb950";
+      ctx.font = "bold 9px ui-monospace, monospace";
+      ctx.fillText("POKES", padL - 8, padT_beh + 12);
+      ctx.textAlign = "left";
+
+      // -------------------------------------------------------------
+      // 5. TIME AXIS RULER
+      // -------------------------------------------------------------
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
+      ctx.lineWidth = 1.0;
+      ctx.beginPath();
+      ctx.moveTo(padL, padT_axis);
+      ctx.lineTo(w - padR, padT_axis);
+      ctx.stroke();
 
       const roughTicks = 8;
-      const rawStep = dt / roughTicks;
+      const rawStep = tSpan / roughTicks;
       const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
       const residual = rawStep / mag;
       let step = mag;
@@ -1172,31 +1248,40 @@
 
       const firstTick = Math.ceil(t0 / step) * step;
       ctx.fillStyle = "var(--text-subtle)";
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
-      ctx.font = "10px ui-monospace, monospace";
+      ctx.font = "9.5px ui-monospace, monospace";
       ctx.textAlign = "center";
 
       for (let t = firstTick; t <= t1; t += step) {
-        const x = ((t - t0) / dt) * width;
+        const x = padL + ((t - t0) / tSpan) * plotW;
         ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, 4);
+        ctx.moveTo(x, padT_axis);
+        ctx.lineTo(x, padT_axis + 4);
         ctx.stroke();
-        ctx.fillText(`${t.toFixed(t < 10 && step < 1 ? 2 : 1)}s`, x, 16);
+        ctx.fillText(`${t.toFixed(t < 10 && step < 1 ? 2 : 1)}s`, x, padT_axis + 14);
       }
+      ctx.textAlign = "left";
 
-      drawCrosshair(ctx, width, height);
-    }
-
-    function drawCrosshair(ctx, width, height) {
-      if (state.mouseX >= 0 && state.mouseX <= width) {
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
+      // -------------------------------------------------------------
+      // 6. HAIRLINE CURSOR & CROSSHAIR
+      // -------------------------------------------------------------
+      if (state.mouseX >= padL && state.mouseX <= w - padR) {
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
         ctx.lineWidth = 1;
+        ctx.setLineDash([2, 2]);
         ctx.beginPath();
-        ctx.moveTo(state.mouseX, 0);
-        ctx.lineTo(state.mouseX, height);
+        ctx.moveTo(state.mouseX, padT_streams);
+        ctx.lineTo(state.mouseX, h - 4);
         ctx.stroke();
+        ctx.setLineDash([]);
+
+        const ht = t0 + ((state.mouseX - padL) / plotW) * tSpan;
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "9.5px ui-monospace, monospace";
+        ctx.fillText(`t = ${ht.toFixed(3)}s`, Math.min(state.mouseX + 6, w - 85), padT_streams + 12);
       }
+
+      updateScrubberViewportBox();
+      updateStatusDisplay();
     }
 
     function updateStatusDisplay() {
@@ -1221,8 +1306,8 @@
       state.activeMotifId = ev.motif;
       setHighlightMode("selected");
 
+      const color = MOTIF_PALETTE[ev.motif] || "#58a6ff";
       const mInfo = state.manifest?.motifs?.[ev.motif] || {};
-      const color = mInfo.color || "#388bfd";
 
       document.getElementById("drawer-dot").style.background = color;
       document.getElementById("drawer-motif-title").textContent = `Motif ${ev.motif} Occurrence`;
@@ -1348,78 +1433,104 @@
         requestRender();
       }
 
-      // Canvases mouse tracking & interaction
-      const canvases = [streamsCanvas, eventsCanvas, rasterCanvas, axisCanvas];
-      canvases.forEach(cv => {
-        cv.addEventListener("mousemove", (e) => {
-          const rect = cv.getBoundingClientRect();
-          state.mouseX = e.clientX - rect.left;
-          
-          if (state.isPanningCanvas) {
-            const dx = e.clientX - state.panStartX;
-            const dt = ((state.panStartT1 - state.panStartT0) / rect.width) * dx;
-            state.t_start = Math.max(0, state.panStartT0 - dt);
-            state.t_end = Math.min(state.T_total, state.panStartT1 - dt);
-            requestRender();
-            return;
-          }
-
+      // Unified Canvas mouse tracking & interaction
+      rasterCanvas.addEventListener("mousemove", (e) => {
+        const rect = rasterCanvas.getBoundingClientRect();
+        state.mouseX = e.clientX - rect.left;
+        state.mouseY = e.clientY - rect.top;
+        
+        if (state.isPanningCanvas) {
+          const dx = e.clientX - state.panStartX;
+          const dt = ((state.panStartT1 - state.panStartT0) / rect.width) * dx;
+          state.t_start = Math.max(0, state.panStartT0 - dt);
+          state.t_end = Math.min(state.T_total, state.panStartT1 - dt);
           requestRender();
+          return;
+        }
 
-          if (state.hoveredEvent) {
-            const ev = state.hoveredEvent;
-            const mInfo = state.manifest?.motifs?.[ev.motif] || {};
-            tooltip.style.display = "block";
-            tooltip.style.left = `${e.pageX + 12}px`;
-            tooltip.style.top = `${e.pageY + 12}px`;
-            document.getElementById("tt-dot").style.background = mInfo.color || "#388bfd";
-            document.getElementById("tt-title").textContent = `Motif ${ev.motif} Occurrence`;
-            document.getElementById("tt-body").innerHTML = `
-              Time (τ): ${ev.time.toFixed(4)}s<br>
-              Vigor (c): ${(ev.amp || 1.0).toFixed(2)}×<br>
-              Warp: ${(ev.warp || 0.0).toFixed(2)}<br>
-              Attributed Spikes: ${ev.obs || 0}
-            `;
-          } else {
-            tooltip.style.display = "none";
-          }
-        });
+        requestRender();
 
-        cv.addEventListener("mouseleave", () => {
-          state.mouseX = -1;
+        if (state.hoveredEvent) {
+          const ev = state.hoveredEvent;
+          const color = MOTIF_PALETTE[ev.motif] || "#58a6ff";
+          tooltip.style.display = "block";
+          tooltip.style.left = `${e.pageX + 12}px`;
+          tooltip.style.top = `${e.pageY + 12}px`;
+          document.getElementById("tt-dot").style.background = color;
+          document.getElementById("tt-title").textContent = `Motif ${ev.motif} Occurrence`;
+          document.getElementById("tt-body").innerHTML = `
+            Time (τ): ${ev.time.toFixed(4)}s<br>
+            Vigor (c): ${(ev.amp || 1.0).toFixed(2)}×<br>
+            Warp: ${(ev.warp || 0.0).toFixed(2)}<br>
+            Attributed Spikes: ${ev.obs || 0}
+          `;
+        } else {
           tooltip.style.display = "none";
-          requestRender();
-        });
-
-        cv.addEventListener("mousedown", (e) => {
-          if (state.hoveredEvent) {
-            openDrawer(state.hoveredEvent);
-            return;
-          }
-          state.isPanningCanvas = true;
-          state.panStartX = e.clientX;
-          state.panStartT0 = state.t_start;
-          state.panStartT1 = state.t_end;
-        });
-
-        // Wheel zooming centered on cursor
-        cv.addEventListener("wheel", (e) => {
-          e.preventDefault();
-          const rect = cv.getBoundingClientRect();
-          const mouseFrac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-          const centerT = state.t_start + mouseFrac * (state.t_end - state.t_start);
-          const zoomFactor = e.deltaY > 0 ? 1.25 : 0.8;
-          const currentSpan = state.t_end - state.t_start;
-          const newSpan = Math.max(0.2, Math.min(state.T_total, currentSpan * zoomFactor));
-
-          state.t_start = Math.max(0, centerT - mouseFrac * newSpan);
-          state.t_end = Math.min(state.T_total, state.t_start + newSpan);
-          if (state.t_end - state.t_start < newSpan) {
-            state.t_start = Math.max(0, state.t_end - newSpan);
-          }
-          requestRender();
-        }, { passive: false });
+        }
       });
+
+      rasterCanvas.addEventListener("mouseleave", () => {
+        state.mouseX = -1;
+        state.mouseY = -1;
+        tooltip.style.display = "none";
+        requestRender();
+      });
+
+      rasterCanvas.addEventListener("mousedown", (e) => {
+        const rect = rasterCanvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+
+        // 1. Hit-test occurrences in Tier 1
+        let clickedEv = null;
+        for (let i = 0; i < state.renderedOccurrences.length; i++) {
+          const occ = state.renderedOccurrences[i];
+          if (Math.abs(mx - occ.x) <= occ.w && my >= occ.y - 5 && my <= occ.baseY + 5) {
+            clickedEv = occ.event;
+            break;
+          }
+        }
+
+        // 2. Hit-test active needle or footprint in Tier 2
+        if (!clickedEv && state.selectedEvent) {
+          const selOcc = state.renderedOccurrences.find(o => o.event.id === state.selectedEvent.id);
+          if (selOcc && Math.abs(mx - selOcc.x) <= 6) {
+            clickedEv = state.selectedEvent;
+          }
+        }
+
+        if (clickedEv) {
+          openDrawer(clickedEv);
+          return;
+        }
+
+        // If clicked on an empty area, start pan
+        state.isPanningCanvas = true;
+        state.panStartX = e.clientX;
+        state.panStartT0 = state.t_start;
+        state.panStartT1 = state.t_end;
+      });
+
+      // Wheel zooming centered on cursor
+      rasterCanvas.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        const rect = rasterCanvas.getBoundingClientRect();
+        const padL = 72, padR = 24;
+        const plotW = rect.width - padL - padR;
+        const mx = Math.max(padL, Math.min(rect.width - padR, e.clientX - rect.left));
+        const mouseFrac = (mx - padL) / plotW;
+        const centerT = state.t_start + mouseFrac * (state.t_end - state.t_start);
+        const zoomFactor = e.deltaY > 0 ? 1.25 : 0.8;
+        const currentSpan = state.t_end - state.t_start;
+        const newSpan = Math.max(0.2, Math.min(state.T_total, currentSpan * zoomFactor));
+
+        state.t_start = Math.max(0, centerT - mouseFrac * newSpan);
+        state.t_end = Math.min(state.T_total, state.t_start + newSpan);
+        if (state.t_end - state.t_start < newSpan) {
+          state.t_start = Math.max(0, state.t_end - newSpan);
+        }
+        requestRender();
+      }, { passive: false });
 
       // Keyboard shortcuts
       window.addEventListener("keydown", (e) => {
