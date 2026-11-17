@@ -1359,11 +1359,8 @@
           };
         }
 
-        // Dynamic density-conditioned pixel occupancy:
-        // Automatically activates only when visible spike density exceeds physical horizontal screen resolution!
-        const countInView = Math.max(0, idx1 - idx0);
-        const spikeDensityPerPixel = countInView / Math.max(1, plotW);
-        const usePixelOccupancy = spikeDensityPerPixel > 1.0;
+        // Granular per-unit physical pixel collision tracking:
+        // A neuron only skips if THAT SPECIFIC NEURON already drew a tick in pixel column pxCol!
         const lastBgX = new Int32Array(N_neural).fill(-1000);
         const lastFgX = new Int32Array(N_neural).fill(-1000);
 
@@ -1387,10 +1384,8 @@
           const x = padL + ((t - t0) / tSpan) * plotW;
           const pxCol = Math.round(x);
 
-          if (usePixelOccupancy) {
-            if (lastBgX[mappedRank] === pxCol) continue;
-            lastBgX[mappedRank] = pxCol;
-          }
+          if (lastBgX[mappedRank] === pxCol) continue;
+          lastBgX[mappedRank] = pxCol;
 
           const y = padT_spike + (mappedRank / N_neural) * h_spike;
           ctx.globalAlpha = style.alpha;
@@ -1419,10 +1414,8 @@
             const x = padL + ((t - t0) / tSpan) * plotW;
             const pxCol = Math.round(x);
 
-            if (usePixelOccupancy) {
-              if (lastFgX[mappedRank] === pxCol) continue;
-              lastFgX[mappedRank] = pxCol;
-            }
+            if (lastFgX[mappedRank] === pxCol) continue;
+            lastFgX[mappedRank] = pxCol;
 
             const y = padT_spike + (mappedRank / N_neural) * h_spike;
             ctx.globalAlpha = style.alpha;

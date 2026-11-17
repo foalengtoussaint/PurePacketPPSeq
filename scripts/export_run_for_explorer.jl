@@ -254,22 +254,13 @@ function export_run(
         streams_dict = Dict("time" => [0.0, T_total], "streams" => [])
     end
 
-    # 7. Multi-scale overview: Keep 100% of foreground sequence spikes, and retain generous Poisson background (350,000 spikes)
-    println("Preparing multi-scale raster with foreground preservation and rich background...")
-    fg_indices = findall(>(0), ev_spk)
-    bg_indices = findall(==(0), ev_spk)
-
-    target_bg = min(length(bg_indices), 350000)
-    bg_step = max(1, Int(floor(length(bg_indices) / target_bg)))
-    selected_bg = bg_indices[1:bg_step:end]
-
-    combined_indices = sort(vcat(fg_indices, selected_bg))
-
-    ts_sub = [round(ts_spk[i], digits=4) for i in combined_indices]
-    ch_sub = ch_spk[combined_indices]
+    # 7. Full-session raster: 100% of ALL spikes (both foreground sequences and complete 80% Poisson background)
+    println("Exporting 100% of all $N_spk spikes (complete foreground + true biological background)...")
+    ts_sub = [round(ts_spk[i], digits=4) for i in 1:N_spk]
+    ch_sub = ch_spk
     rank_sub = [get(rank_map, c, 0) for c in ch_sub]
-    ev_sub = ev_spk[combined_indices]
-    m_sub  = m_spk[combined_indices]
+    ev_sub = ev_spk
+    m_sub  = m_spk
 
     spikes_overview = Dict(
         "t" => ts_sub,
