@@ -7,120 +7,17 @@
 
 `PurePacketPPSeq.jl` is a high-performance Julia package implementing a continuous-time marked point-process framework for discovering coordinated, multi-neuronal spatiotemporal firing motifs from large-scale extracellular recordings (e.g., Neuropixels) **without temporal binning, template matching, or external statistical readouts**.
 
-Traditional sequence detection algorithms either discretize continuous spike trains into arbitrary time bins (destroying millisecond-scale latency jitter and warping information) or rely on external regression classifiers and neural decoders that overfit and lack generative consistency. `PurePacketPPSeq.jl` models each individual spike as an event generated from a continuous intensity function governed by latent sequence occurrences, multi-timescale background excitability, motor vigor, and heavy-tailed continuous temporal warping.
-
----
-
-## 1. Generative Point-Process Formulation
-
-Let $c \in \{1, \dots, N\}$ denote the recorded neural units, and let $\mathcal{S} = \{(t_i, c_i)\}_{i=1}^{N_{\mathrm{spikes}}}$ denote the continuous event stream over session duration $T$. The instantaneous conditional intensity function for unit $c$ at time $t$ is defined as:
+Instead of slicing continuous spike trains into discrete time bins or relying on external regression classifiers, `PurePacketPPSeq.jl` models each individual spike as an event generated from a continuous conditional intensity function governed by latent sequence occurrences, multi-scale background excitability, motor vigor, and heavy-tailed continuous temporal warping:
 
 $$\lambda_c(t) = \lambda_c^{(0)}(t) + \sum_{e=1}^E c_e \sum_{p \in \mathcal{P}_{z_e}: \mathrm{chan}(p)=c} a_p \, \mathcal{N}\left(t \;\middle|\; \tau_e + \mu_p + \sum_{r=1}^R W_{p,r}^{(z_e)} u_{e,r}, \; \sigma_p^2\right)$$
 
-where:
-- $\lambda_c^{(0)}(t)$ is the multi-scale, continuous-time background intensity.
-- $z_e \in \{1, \dots, M\}$ is the discrete motif archetype identity of occurrence $e$.
-- $\tau_e \in [0, T]$ is the continuous onset time of occurrence $e$.
-- $c_e > 0$ is the single-trial motor vigor amplitude scaling factor.
-- $\mathbf{u}_e \in \mathbb{R}^R$ is the latent continuous temporal warping coordinate vector.
-- $\mathcal{P}_z$ is the set of Gaussian spike packets comprising motif $z$.
-- $a_p, \mu_p, \sigma_p^2$ are the packet amplitude mass, mean temporal latency, and timing variance on unit $\mathrm{chan}(p)$.
-- $\mathbf{W}^{(z)} \in \mathbb{R}^{|\mathcal{P}_z| \times R}$ is the learned linear kinematic warping projection for motif $z$.
-
-The exact point-process log-likelihood over the entire recording is evaluated analytically without numerical quadrature:
-
-$$\ln \mathcal{L}(\mathcal{S} \mid \boldsymbol{\Theta}) = \sum_{i=1}^{N_{\mathrm{spikes}}} \ln \lambda_{c_i}(t_i) - \sum_{c=1}^N \int_0^T \lambda_c(t) \, dt$$
-
-The continuous compensator integral for any Gaussian packet on channel $c$ evaluates in closed form via the error function $\operatorname{erf}(\cdot)$:
-
-$$\int_{T_1}^{T_2} \mathcal{N}(t \mid \tilde{\mu}, \sigma^2) \, dt = \frac{1}{2} \left[ \operatorname{erf}\left(\frac{T_2 - \tilde{\mu}}{\sqrt{2\sigma^2}}\right) - \operatorname{erf}\left(\frac{T_1 - \tilde{\mu}}{\sqrt{2\sigma^2}}\right) \right]$$
+All log-likelihood evaluations and continuous compensator integrals are computed in closed form using analytical error functions ($\operatorname{erf}$).
 
 ---
 
-## 2. Model Tier Hierarchy & Conjugate Point-Process Architecture
-
-The package is built around a compositional hierarchy of generative tiers ($m = 0 \to 5$), where each level adds an explicit biophysical mechanism with closed-form conjugate updates:
-
-| Tier | Mathematical Mechanism | Generative Contribution | Source Module |
-| :--- | :--- | :--- | :--- |
-| **$m = 0$** | Multi-Scale Background Floor | Baseline firing rate $\bar{\lambda}_{0,c}$ and continuous excitability floor | `src/scales/`, `m0_floor.jl` |
-| **$m = 1$** | Biophysical Spike Packets | Localized Gaussian packet archetypes $(a_p, \mu_p, \sigma_p^2)$ with $\text{SNR}_p > 1.0$ | `src/mechanisms/m1_packet.jl` |
-| **$m = 2$** | Sequence Carrier & Occurrences | Continuous onset discovery $\tau_e$, dynamic bounding envelopes $[\delta_L, \delta_R]$, and competitive occurrence life cycles | `src/mechanisms/m2_carrier.jl` |
-| **$m = 3$** | Motif Dictionary & Vigor Dynamics | Nonparametric birth/death ($M \to M \pm 1$), Two-Part MDL complexity tax, gauge symmetry, and motor vigor $c_e \sim \operatorname{Gamma}(\alpha_c, \alpha_c)$ | `src/mechanisms/m3_motif.jl` |
-| **$m = 4$** | Continuous Warping Manifold | Heavy-tailed Student-$t$ kinematics $\mathbf{u}_e$ with ARD precision pruning | `src/mechanisms/m4_manifold.jl` |
-| **$m = 5$** | Fully Coupled Continuous Engine | Dual-timescale OU network arousal $x_r(t)$ and cellular micro-drift $\delta x_c(t)$ | `src/mechanisms/m5_ou.jl` |
-
-### Core Architectural Pillars
-
-| Mechanism | Model Specification | Key Properties |
-| :--- | :--- | :--- |
-| **Leg 1: Multi-Scale Background Filtering** | $\ln \lambda_c^{(0)}(t) = \ln \bar{\lambda}_{0,c} + \mu_{r(c)} + x_{r(c)}(t) + \delta x_c(t)$ | **Fast network OU ($x_r, \tau_{\mathrm{net}} \approx 0.5\text{ s}$):** Absorbs sub-second waves of regional gain (e.g. MOp vs. CP, $\rho \approx +0.162$), preventing unstructured surges from forming false motifs.<br>**Slow cellular drift ($\delta x_c, \tau_{\mathrm{cell}} \approx 60\text{ s}$):** Tracks unit-specific multi-minute baseline drift across long recordings.<br>**Gauge Invariance:** Zero-mean constraints enforced via projection operators. |
-| **Leg 2: Single-Trial Motor Vigor Pinning** | $c_e \sim \operatorname{Gamma}(\alpha_c, \beta_c), \quad \beta_c = \alpha_c \implies \mathbb{E}[c_e] = 1.0$ | Decouples burst intensity from internal sequence tempo. Prevents the model from creating duplicate motifs for high-rate vs. low-rate trial executions. Shape parameter $\alpha_c$ updates dynamically across MCMC sweeps. |
-| **Leg 3: Heavy-Tailed Warping & ARD** | $\mathbf{u}_e \mid \eta_e \sim \mathcal{N}\left(\mathbf{0}, \; \left(\eta_e \operatorname{diag}(\boldsymbol{\alpha})\right)^{-1}\right), \quad \eta_e \sim \operatorname{Gamma}\left(\frac{\nu}{2}, \frac{\nu}{2}\right)$ | **Heavy-Tailed Robustness:** Marginal Student-$t$ prior ($\mathbf{u}_e \sim \mathcal{T}_\nu(\mathbf{0}, \boldsymbol{\alpha}^{-1}), \nu = 4.0$) prevents behavioural timing outliers from destabilizing motif archetypes.<br>**Automatic Relevance Determination (ARD):** Hyper-priors $\alpha_r \sim \operatorname{Gamma}(a_\alpha, b_\alpha)$ drive $\alpha_r \to \infty$ for uninformative axes, automatically pruning inactive warping dimensions. |
-
----
-
-## 3. Reversible-Jump MCMC (RJMCMC) Engine
-
-`PurePacketPPSeq.jl` implements trans-dimensional RJMCMC moves to infer the number of motifs $M$ and packets $P_z$ directly from the data:
-
-1. **Motif Birth & Death:**
-   - **Dimension-Matching Birth:** Proposes new motif archetypes seeded from unassigned high-density event clusters.
-   - **Two-Part Minimum Description Length (MDL) Prior:** Every proposed motif must overcome a strict dictionary code-length penalty:
-     $$\Delta \ln \pi(\Theta) = -\left(\lambda_{\mathrm{dict}} + k_{\mathrm{packet}} P_z + k_{\mathrm{channel}} \sum_{c} \mathbb{I}[c \in \mathcal{P}_z]\right)$$
-     preventing runaway dictionary bloat and ensuring parsimonious sequence recovery.
-2. **Packet Gibbs Resampling:**
-   - Packet latencies $\mu_p$ and temporal variances $\sigma_p^2$ are updated conditionally via conjugate normal-inverse-gamma transitions.
-   - Packet masses $a_p$ are sampled conditionally subject to a biophysical SNR threshold ($\text{SNR}_p > 1.0$).
-3. **Continuous Warping M-Step:**
-   - Ridge-regularized projection updates for $\mathbf{W}^{(z)}$ combined with analytical Gibbs conditional updates for latent coordinates $\mathbf{u}_e$.
-
----
-
-## 4. Empirical Benchmarks & Validation Suite
-
-The framework was benchmarked on dual-structure Neuropixels recordings from awake mice performing an operant behavioral task (motor cortex $\text{MOp}$: $N = 208$ units; dorsal striatum $\text{CP}$: $N = 203$ units; $411$ units total; $2.48\text{M}$ events across $2,114.3\text{ s}$):
-
-### A. Unsupervised Motif Discovery & Regional Ordering
-![Unsupervised Motifs](scripts/fig1_unsupervised_motifs.png)
-- Discovers reproducible spatiotemporal sequences across hundreds of units without behavioral supervision.
-- Reveals that cortical firing systematically precedes striatal firing by $+298.6\text{ ms}$ in full operant sequences (Motif 1) and $+339.3\text{ ms}$ on average across motifs.
-
-### B. Split-Half Out-of-Sample Cross-Validation
-- Evaluated on chronologically separated out-of-sample data with frozen motif archetypes:
-  $$\Delta LL_{\mathrm{CV}} = +4,556\text{ nats} \quad (+1.39\text{ nats / event})$$
-- Demonstrates a **$4.0\times$ temporal concentration** above the shifted null floor ($-2,020\text{ nats}$).
-
-### C. Continuous Kinematic Coupling
-![Continuous Warping](scripts/fig3_continuous_warping.png)
-- Inferred latent warping coordinates $\mathbf{u}_e$ correlate with single-trial movement kinematics:
-  $$\text{Mean } R^2_{\mathrm{kin}} = 41.4\% \quad (p = 1.0 \times 10^{-4}, \text{ predictive Student-}t)$$
-- Tracks single-trial behavioral execution duration with $r = +0.57$.
-
-### D. Leak-Free Joint vs. Independent Cross-Validation (Held-Out Data)
-Models were trained cold ($M_{\mathrm{init}} = 0$) on $t \in [400, 1200\text{ s}]$ and scored on an unseen $500\text{ s}$ held-out block ($t \in [1200, 1700\text{ s}]$, $593,118$ test spikes):
-
-$$\Delta LL_1 = LL_{\mathrm{joint}} - \left(LL_{\mathrm{MOp}} + LL_{\mathrm{CP}}\right) = \mathbf{+17,027.50\text{ nats}} \quad (\mathbf{+0.0414\text{ bits / spike}})$$
-
-- Cortical held-out gain: $+4,877.62\text{ nats}$ ($+0.0191\text{ nats/spk}$)
-- Striatal held-out gain: $+12,149.88\text{ nats}$ ($+0.0360\text{ nats/spk}$)
-- Model C achieved higher test likelihood using **fewer total motifs** ($M=16$) than the two independent regional models combined ($M = 8 + 10 = 18$).
-
-### E. Prospective Causal Lookahead Forecasting ($\Delta = 250\text{ ms}$)
-Predicting target spikes in the forward horizon $[t_k, t_k + 250\text{ ms}]$ conditioned strictly on past source activity ($t < t_k$):
-- $\text{MOp}(t < t_k) \to \text{CP}([t_k, t_k + 250\text{ ms}])$: **$+0.0276\text{ nats / spike}$**
-- $\text{CP}(t < t_k) \to \text{MOp}([t_k, t_k + 250\text{ ms}])$: **$+0.0196\text{ nats / spike}$**
-- Forward corticostriatal forecasting is **$1.41\times$ stronger** than reverse striatocortical feedback, providing quantitative confirmation of feedforward cortical drive matching the $+298.6\text{ ms}$ MOp onset lead.
-
----
-
-## 5. Installation & Standalone Quickstart
-
-### Prerequisites
-- Julia 1.10 or higher.
+## Quickstart
 
 ### Installation
-Clone the repository and instantiate the Julia environment:
 
 ```bash
 git clone https://github.com/foalengtoussaint/PurePacketPPSeq.git
@@ -130,20 +27,21 @@ julia --project=. -e 'using Pkg; Pkg.instantiate()'
 
 ### Self-Contained Runnable Example
 
-The following script generates a synthetic multi-neuron spike train with an embedded sequential motif and fits the model from cold start without requiring external data files:
+Generate a synthetic multi-neuron spike train with an embedded sequence motif and fit the model from complete cold start without external data:
 
 ```julia
 using PurePacketPPSeq
 using Random
 
-# 1. Generate synthetic spike train with an embedded sequence motif
+# 1. Generate synthetic spike train (50 units, 100 seconds)
 Random.seed!(42)
 N_units = 50
-T_total = 100.0  # seconds
+T_total = 100.0
 
-# Background Poisson spikes (mean rate = 1.5 Hz per unit)
 timestamps = Float64[]
 channels = Int[]
+
+# Background Poisson spikes (1.5 Hz per unit)
 for c in 1:N_units
     t = rand() * 0.5
     while t < T_total
@@ -153,7 +51,7 @@ for c in 1:N_units
     end
 end
 
-# Embed 20 occurrences of a 500 ms sequential cascade across channels 1 -> 25
+# Embed 20 occurrences of a 500 ms sequential cascade across units 1 -> 25
 for occ_time in range(5.0, 95.0, length=20)
     for (step, c) in enumerate(1:25)
         spike_time = occ_time + (step - 1) * 0.020 + randn() * 0.003
@@ -162,56 +60,85 @@ for occ_time in range(5.0, 95.0, length=20)
     end
 end
 
-# Sort chronologically
 perm = sortperm(timestamps)
-timestamps = timestamps[perm]
-channels = channels[perm]
+dataset = SpikeDataset(timestamps[perm], channels[perm]; N_channels=N_units, T_total=T_total)
 
-# 2. Package into continuous-time SpikeDataset
-dataset = SpikeDataset(timestamps, channels; N_channels=N_units, T_total=T_total)
+# 2. Initialize from cold start (0 initial motifs)
+model = initialize_scratch_model(dataset, Dict{Int, PurePacketMotif}(); R_init=1)
 
-# 3. Initialize model from complete cold start (0 initial motifs)
-empty_motifs = Dict{Int, PurePacketMotif}()
-model = initialize_scratch_model(dataset, empty_motifs; R_init=1)
+# 3. Fit via Reversible-Jump MCMC
+fit!(model, dataset; sweeps=25, allow_motif_birth=true)
 
-# 4. Fit via Reversible-Jump MCMC
-fit!(
-    model, dataset;
-    sweeps=25,
-    allow_motif_birth=true,        # Enables RJMCMC archetype birth/death
-    checkpoint_interval=10
-)
-
-# 5. Inspect discovered motifs and occurrences
-println("Discovered $(length(model.motifs)) motifs across $(length(model.occurrences)) occurrences.")
-```
-
-### Out-of-Sample Evaluation with Frozen Motifs
-
-```julia
-# Test-time occurrence inference with frozen motifs on held-out data
+# 4. Out-of-sample evaluation on held-out data with frozen motifs
 test_model = initialize_scratch_model(
-    test_dataset, deepcopy(model.motifs);
-    bg_rates=model.bg_rates,
-    ard_state=model.ard_state,
-    R_max=length(model.ard_state.active_mask)
+    dataset, deepcopy(model.motifs);
+    bg_rates=model.bg_rates, ard_state=model.ard_state, R_max=length(model.ard_state.active_mask)
 )
+fit!(test_model, dataset; sweeps=10, allow_motif_birth=false, frozen_motif_ids=Set(keys(test_model.motifs)))
 
-fit!(
-    test_model, test_dataset;
-    sweeps=15,
-    allow_motif_birth=false,
-    frozen_motif_ids=Set(keys(test_model.motifs))
-)
+println("Discovered $(length(model.motifs)) motifs across $(length(model.occurrences)) occurrences.")
 ```
 
 ---
 
-## 6. Project Architecture
+## Generative Tier Architecture ($m = 0 \to 5$)
+
+The package is organized into a compositional hierarchy of generative tiers ($m = 0 \to 5$), where each level introduces an explicit biophysical mechanism with closed-form conjugate updates:
+
+| Tier | Generative Mechanism | Description | Source Module |
+| :--- | :--- | :--- | :--- |
+| **$m = 0$** | Multi-Scale Background Floor | Baseline firing rate $\bar{\lambda}_{0,c}$ and continuous excitability floor | `src/scales/`, `m0_floor.jl` |
+| **$m = 1$** | Biophysical Spike Packets | Localized Gaussian packet archetypes $(a_p, \mu_p, \sigma_p^2)$ with $\text{SNR}_p > 1.0$ | `src/mechanisms/m1_packet.jl` |
+| **$m = 2$** | Sequence Carrier & Occurrences | Continuous onset discovery $\tau_e$, dynamic bounding envelopes $[\delta_L, \delta_R]$, and competitive occurrence life cycles | `src/mechanisms/m2_carrier.jl` |
+| **$m = 3$** | Motif Dictionary & Vigor Dynamics | Nonparametric birth/death ($M \to M \pm 1$), Two-Part MDL complexity tax, gauge symmetry, and motor vigor $c_e$ | `src/mechanisms/m3_motif.jl` |
+| **$m = 4$** | Continuous Warping Manifold | Heavy-tailed Student-$t$ kinematics $\mathbf{u}_e$ with ARD precision pruning | `src/mechanisms/m4_manifold.jl` |
+| **$m = 5$** | Fully Coupled Continuous Engine | Dual-timescale OU network arousal $x_r(t)$ and cellular micro-drift $\delta x_c(t)$ | `src/mechanisms/m5_ou.jl` |
+
+### Core Mathematical Components
+
+- **Multi-Scale Background Filtering ($m=0, 5$):**
+  $$\ln \lambda_c^{(0)}(t) = \ln \bar{\lambda}_{0,c} + \mu_{r(c)} + x_{r(c)}(t) + \delta x_c(t)$$
+  Fast regional network OU ($x_r, \tau_{\mathrm{net}} \approx 0.5\text{ s}$) absorbs sub-second arousal surges ($\rho_{\mathrm{MOp},\mathrm{CP}} = +0.162$), while slow cellular drift ($\delta x_c, \tau_{\mathrm{cell}} \approx 60\text{ s}$) tracks multi-minute baseline shifts. Exact gauge invariance is enforced via orthogonal projection.
+
+- **Single-Trial Motor Vigor Scaling ($m=3$):**
+  $$c_e \sim \operatorname{Gamma}(\alpha_c, \beta_c), \quad \text{with } \beta_c = \alpha_c \implies \mathbb{E}[c_e] = 1.0$$
+  Decouples trial-by-trial burst intensity from sequence duration, preventing duplicate motif allocation for high-rate vs. low-rate trial executions.
+
+- **Heavy-Tailed Continuous Warping & ARD ($m=4$):**
+  $$\mathbf{u}_e \mid \eta_e \sim \mathcal{N}\left(\mathbf{0}, \; \left(\eta_e \operatorname{diag}(\boldsymbol{\alpha})\right)^{-1}\right), \quad \eta_e \sim \operatorname{Gamma}\left(\frac{\nu}{2}, \frac{\nu}{2}\right) \implies \mathbf{u}_e \sim \mathcal{T}_\nu(\mathbf{0}, \boldsymbol{\alpha}^{-1})$$
+  Student-$t$ robustness ($\nu = 4.0$) prevents behavioral timing outliers from distorting motif archetypes, while Automatic Relevance Determination (ARD) hyper-priors on $\alpha_r$ prune inactive warping axes automatically.
+
+---
+
+## Empirical Benchmarks & Validation Suite
+
+Validated on dual-structure Neuropixels recordings from awake mice performing an operant behavioral task ($\text{MOp}$: $N = 208$ units; $\text{CP}$: $N = 203$ units; $411$ units total; $2.48\text{M}$ spikes across $2,114.3\text{ s}$):
+
+| Validation Benchmark | Evaluation Protocol | Primary Result | Key Finding |
+| :--- | :--- | :--- | :--- |
+| **Out-of-Sample Split-Half CV** | Chronologically separated test blocks with frozen motifs | $\mathbf{+4,556\text{ nats}}$ ($+1.39\text{ nats/event}$) | **$4.0\times$ temporal concentration** above shifted null floor ($-2,020\text{ nats}$). |
+| **Continuous Kinematic Coupling** | Single-trial latent warping $\mathbf{u}_e$ vs. kinematics | $\mathbf{R^2_{\mathrm{kin}} = 41.4\%}$ ($p = 1.0 \times 10^{-4}$) | Latent warping tracks trial duration with $r = +0.57$. |
+| **Leak-Free Joint vs. Independent CV** | Trained cold ($400\text{--}1200\text{ s}$), tested on unseen $500\text{ s}$ ($593\text{k}$ spks) | $\mathbf{+17,027.50\text{ nats}}$ ($+0.0414\text{ bits/spk}$) | Joint model explains unseen data better with **fewer motifs** ($M=16$ vs. $18$). |
+| **Prospective Causal Lookahead** | Forecast target in $[t_k, t_k + 250\text{ ms}]$ from past source ($t < t_k$) | $\text{MOp}\to\text{CP}: \mathbf{+0.0276\text{ nats/spk}}$<br>$\text{CP}\to\text{MOp}: \mathbf{+0.0196\text{ nats/spk}}$ | **$1.41\times$ stronger forward drive**, confirming cortical temporal lead ($+298.6\text{ ms}$). |
+| **Regional Temporal Ordering** | Cross-structure motif packet peak latencies | $\text{MOp}$ leads $\text{CP}$ by $\mathbf{+298.6\text{ ms}}$ | Stereotyped sequence: early cortical initiation followed by striatal burst. |
+
+### Visualizations
+
+<p align="center">
+  <img src="scripts/fig1_unsupervised_motifs.png" width="48%" alt="Unsupervised Motifs" />
+  <img src="scripts/fig3_continuous_warping.png" width="48%" alt="Continuous Warping" />
+</p>
+<p align="center">
+  <em>Left: Unsupervised spatiotemporal motif discovery across 411 units. Right: Continuous latent kinematic warping manifold.</em>
+</p>
+
+---
+
+## Project Architecture
 
 ```
 PurePacketPPSeq/
-├── src/                          # Core mathematical engine (strictly domain-agnostic)
+├── src/                          # Core mathematical engine (domain-agnostic)
 │   ├── PurePacketPPSeq.jl        # Module definition and public API exports
 │   ├── types.jl                  # Structs (SpikeDataset, Packet, PurePacketMotif, PureOccurrence)
 │   ├── sampler.jl                # MCMC proposal and Gibbs transition kernels
@@ -221,12 +148,12 @@ PurePacketPPSeq/
 │   ├── mechanisms/               # Generative tier modules (m = 0 -> 5)
 │   │   ├── m0_floor.jl           # m=0: Continuous background rate floor
 │   │   ├── m1_packet.jl          # m=1: Biophysical SNR-truncated packet representation
-│   │   ├── m2_carrier.jl         # m=2: Gamma motor vigor scaling
-│   │   ├── m3_motif.jl           # m=3: Reversible-Jump archetype dictionary prior
+│   │   ├── m2_carrier.jl         # m=2: Sequence carrier & occurrence discovery
+│   │   ├── m3_motif.jl           # m=3: Motif dictionary prior & motor vigor scaling
 │   │   ├── m4_manifold.jl        # m=4: Heavy-tailed Student-t continuous warping & ARD
 │   │   └── m5_ou.jl              # m=5: Fully coupled continuous engine
 │   └── scales/                   # Multi-scale background OU models
-├── scripts/                      # Experiment-specific orchestration & paper figures
+├── scripts/                      # Experiment orchestration & figure generation
 │   ├── plot_fig1_unsupervised_motifs.py
 │   ├── plot_figure2_behavioral_correspondence.jl
 │   ├── plot_fig3_continuous_warping.jl
@@ -239,9 +166,7 @@ PurePacketPPSeq/
 
 ---
 
-## 7. Citation
-
-If you use `PurePacketPPSeq.jl` in your research, please cite:
+## Citation
 
 ```bibtex
 @software{PurePacketPPSeq2026,
@@ -254,6 +179,6 @@ If you use `PurePacketPPSeq.jl` in your research, please cite:
 
 ---
 
-## 8. License
+## License
 
 This project is licensed under the [MIT License](LICENSE).
